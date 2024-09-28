@@ -7,6 +7,7 @@ import Control.Monad.Cont
 import Control.Monad.Identity
 import Data.Map (Map, (!), fromList)
 import Control.Monad.Cont.Class
+import Control.Monad (when)
 
 -- types
 data Range = All | Self | One deriving Show
@@ -273,9 +274,6 @@ insertAt :: [a] -> Int -> a -> [a]
 insertAt l i e =
     let (l1, _ : l2) = splitAt i l in
     l1 ++ e : l2
-
-label :: (MonadCont m) => a -> m (a -> m b, a)
-label a = callCC $ \k -> let go b = k (go, b) in return (go, a)
 
 -- show functions
 showHex16 :: Word16 -> String
@@ -581,10 +579,13 @@ performAttack m from s =
 
 -- actions framework
 data ActionMem = ActionMem
-    { afDamage :: Maybe Word16 }
-afInit = ActionMem { afDamage = Nothing }
+    { from :: Int
+    , afDamage :: Maybe Word16 }
+afInit from = ActionMem 
+  { from = from
+  , afDamage = Nothing }
 
-type ActionCont = (TurnState, [Member], [String], Word16, Int, ActionMem)
+type ActionCont = (TurnState, [Member], [String], Word16, ActionMem)
 
 type ActionFun = ActionCont -> (ActionRet -> ContT ActionRet Identity (Bool, ActionCont)) -> ContT ActionRet Identity (Bool, ActionCont)
 returnY x = return (True, x)
@@ -599,7 +600,7 @@ type ActionGraph = (ActionMap, ActionDec)
 
 runAction :: ActionRet -> Int -> ActionGraph -> ActionRet
 runAction (ts, m, h, s) from (amap, adec) =
-    let initCont = (ts, m, h, s, from, afInit) in
+    let initCont = (ts, m, h, s, afInit from) in
     runCont (callCC $ \exit -> do
         (loop, (cont, i)) <- label (initCont, 0)
         (b, cont) <- (amap ! i) cont exit
@@ -610,76 +611,82 @@ runAction (ts, m, h, s) from (amap, adec) =
          _ -> undefined)) id
 
 afConfusion :: ActionFun
-afConfusion (ts, m, h, s, from, am) exit =
-    let to = attackTarg (m !! from) in
-    if (status (m !! from) .&. 0x08) /= 0 then do
+afConfusion (ts, m, h, s, am) exit =
+    let fr = from am
+        to = attackTarg (m !! fr) in
+    if (status (m !! fr) .&. 0x08) /= 0 then do
         let loop s =
                 let s' = nextRng s
                     sel = fromIntegral (s' .>>. 5) in
                 if alive (m !! sel) then (sel, s)
                 else loop s
         (sel, s) <- return $ loop s
-        m <- return $ insertAt m from (m !! from) { attackTarg = sel }
-        returnY (ts, m, h, s, from, am)
-    else returnY (ts, m, h, s, from, am)
+        m <- return $ insertAt m fr (m !! fr) { attackTarg = sel }
+        returnY (ts, m, h, s, am)
+    else returnY (ts, m, h, s, am)
 
 -- counts as tank and Miss rng
 afStatusRng :: ActionFun
-afStatusRng (ts, m, h, s, from, am) exit =
-    returnY (ts, m, h, if status (m !! from) .&. 0x80 /= 0 then nextRng s else s, from, am)
+afStatusRng (ts, m, h, s, am) exit =
+    returnY (ts, m, h, if status (m !! from am) .&. 0x80 /= 0 then nextRng s else s, am)
 
 afAttacksText :: ActionFun
-afAttacksText (ts, m, h, s, from, am) exit =
-    returnY (ts, m, h ++ [printf "%s's attack!" $ name (m !! from)], s, from, am)
+afAttacksText (ts, m, h, s, am) exit =
+    returnY (ts, m, h ++ [printf "%s's attack!" $ name (m !! from am)], s, am)
 
 afNoTarget :: ActionFun
-afNoTarget (ts, m, h, s, from, am) exit =
-    let to = attackTarg (m !! from) in
-    if statusMask (m !! from) == 0x00 || not (alive (m !! from)) ||
-       statusMask (m !! to) == 0x00   || not (alive (m !! to))
+afNoTarget (ts, m, h, s, am) exit =
+    let fr = from am
+        to = attackTarg (m !! fr) in
+    if statusMask (m !! fr) == 0x00 || not (alive (m !! fr)) ||
+       statusMask (m !! to) == 0x00 || not (alive (m !! to))
     then exit (Continue, m, h ++ [printf "%s was already gone." $ name (m !! to)], s)
-    else returnY (ts, m, h, s, from, am)
+    else returnY (ts, m, h, s, am)
 
 afCrit :: ActionFun
-afCrit (ts, m, h, s, from, am) exit = do
-    let to = attackTarg (m !! from)
-    (crit, s) <- return $ cdRate m from to s
+afCrit (ts, m, h, s, am) exit = do
+    let fr = from am
+        to = attackTarg (m !! fr)
+    (crit, s) <- return $ cdRate m fr to s
     if crit then do
         h <- return $ h ++ ["SMAAAASH!!"]
-        (dmg, s) <- return $ critDamage m from s
+        (dmg, s) <- return $ critDamage m fr s
         am <- return $ am { afDamage = Just dmg }
-        returnY (ts, m, h, s, from, am)
-    else returnN (ts, m, h, s, from, am)
+        returnY (ts, m, h, s, am)
+    else returnN (ts, m, h, s, am)
 
 afDodgeSkip :: ActionFun
-afDodgeSkip (ts, m, h, s, from, am) exit =
-    let to = attackTarg (m !! from) in
+afDodgeSkip (ts, m, h, s, am) exit =
+    let fr = from am
+        to = attackTarg (m !! fr) in
     if status (m !! to) .&. 0x70 /= 0 || buff (m !! to) .&. 0x80 /= 0 then do
-        (dmg, s) <- return $ attackDamage m from to s
+        (dmg, s) <- return $ attackDamage m fr to s
         am <- return $ am { afDamage = Just dmg }
-        returnY (ts, m, h, s, from, am)
-    else returnN (ts, m, h, s, from, am)
+        returnY (ts, m, h, s, am)
+    else returnN (ts, m, h, s, am)
 
 afDodge :: ActionFun
-afDodge (ts, m, h, s, from, am) exit = do
-    let to = attackTarg (m !! from)
-    (dodge, s) <- return $ cdRate m to from s
+afDodge (ts, m, h, s, am) exit = do
+    let fr = from am
+        to = attackTarg (m !! fr)
+    (dodge, s) <- return $ cdRate m to fr s
     if not dodge then do
-        (dmg, s) <- return $ attackDamage m from to s
+        (dmg, s) <- return $ attackDamage m fr to s
         am <- return $ am { afDamage = Just dmg }
-        returnN (ts, m, h, s, from, am)
+        returnN (ts, m, h, s, am)
     else exit (Continue, m, h ++ [printf "%s dodged swiftly." $ name (m !! to)], s)
 
 afApplyDamage :: ActionFun
-afApplyDamage (ts, m, h, s, from, am) exit =
-    let to = attackTarg (m !! from)
+afApplyDamage (ts, m, h, s, am) exit =
+    let fr = from am
+        to = attackTarg (m !! fr)
         dmg = fromMaybe undefined (afDamage am) in
     if (buff (m !! to) .&. 0x04) /= 0 then do
-        (ts, m, h') <- return $ applyDamage dmg m to from
+        (ts, m, h') <- return $ applyDamage dmg m to fr
         h <- return $ h ++ [printf "%s bounced back the attack!" $ name (m !! to)] ++ h'
         exit (ts, m, h, s)
     else  do
-        (ts, m, h') <- return $ applyDamage dmg m from to
+        (ts, m, h') <- return $ applyDamage dmg m fr to
         h <- return $ h ++ h'
         exit (ts, m, h, s)
 
