@@ -34,13 +34,6 @@ data Member = Member
     , attackList :: [Word8]
     } deriving (Show, Eq)
 
-data Battle = Battle
-    { members ::    [Member]
-    , rng ::        Word16
-    , init_rng ::   Word16
-    , history ::    [String]
-    } deriving (Show, Eq)
-
 -- constants
 -- note: 0x92 is bomber, 0x9a is 4 starmen
 encounterTable :: [Word8]
@@ -404,19 +397,35 @@ battleEnd members
     | all (== 0x0000) (drop 4 $ map hp members) = Win
     | otherwise = Continue
 
-applyDamage :: Word16 -> [Member] -> Int -> Int -> (TurnState, [Member], [String])
-applyDamage dmg members from to =
+applyDamage :: Word16 -> [Member] -> Int -> Int -> Word16 -> (TurnState, [Member], [String], Word16)
+applyDamage dmg members from to s =
     let mFrom = members !! from
         mTo = members !! to
         dmg' = if (buff mTo .&. 0x10) /= 0 then dmg `div` 2 else dmg
         dmg'' = if (buff mTo .&. 0x08) /= 0 then dmg' `div` 2 else dmg'
         dmg''' = if dmg'' == 0x0000 then 0x0001 else dmg''
-        (members', history) = 
+        (members', history, s') = 
             if hp mTo < dmg''
             then (insertAt members to (mTo { hp = 0x0000, status = status mTo .|. 0x80 }),
-                  [printf "%s was beaten!" (name mTo)])
-            else (insertAt members to (mTo { hp = hp mTo - dmg'' }), []) in
-    (battleEnd members', members', printf "%s suffered damage of %d." (name mTo) dmg'' : history)
+                  [printf "%s was beaten!" (name mTo)], s)
+            else 
+                let mTo' = mTo { hp = hp mTo - dmg'' }
+                    (mTo'', history', s') = if (status mTo' .&. 0x0c) /= 0 then
+                        let s' = nextRng s in
+                        if (s' .&. 0xc0) == 0x00 then
+                            (mTo' { status = status mTo' .&. 0xf3 },
+                             [printf "%s wasn't confused anymore!" $ name mTo], s')
+                        else (mTo', [], s')
+                    else (mTo', [], s)
+                    (mTo''', history'', s'') = if (status mTo' .&. 0x10) /= 0 then
+                        let s'' = nextRng s' in
+                        if (s'' .&. 0xc0) == 0x00 then
+                            (mTo'' { status = status mTo'' .&. 0xef },
+                             history' ++ [printf "%s woke up." $ name mTo], s'')
+                        else (mTo'', history', s'')
+                    else (mTo'', history', s') in
+                (insertAt members to mTo''', history'', s'') in
+    (battleEnd members', members', printf "%s suffered damage of %d." (name mTo) dmg'' : history, s')
 
 type ActionRet = (TurnState, [Member], [String], Word16)
 
@@ -500,28 +509,6 @@ performAttack m from s =
     runCont (callCC $ \exit -> callCC $ \exit2 -> do
     (ts, m, h, s) <- performStatus m from s exit2
     case attackSel (m !! from) of
-        -- continuous attack
-        0x02 -> do
-            -- confusion -> hitting random target
-            (to, s) <- performConfusion m from s
-            h <- return [printf "%s's attack!" $ name (m !! from)]
-            -- exit if enemy's gone
-            performNoTarget m from h s exit
-            (dodge, s) <- return $ cdRate m to from s
-            (s, m, h) <- if dodge then
-                return (s, m, h ++ [printf "%s dodged swiftly." $ name (m !! to)])
-            else do
-                (dmg, s) <- return $ attackDamage m from to s
-                (ts, m, h') <- return $ applyDamage dmg m from to
-                when (ts /= Continue) (exit (ts, m, h ++ h', s))
-                return (s, m, h ++ h')
-            h <- return $ h ++ ["Continuous attack:"]
-            (dodge, s) <- return $ cdRate m to from s
-            when dodge
-                (exit (Continue, m, h ++ [printf "%s dodged swiftly." $ name (m !! to)], s))
-            (dmg, s) <- return $ attackDamage m from to s
-            (ts, m, h') <- return $ applyDamage dmg m from to
-            return (ts, m, h ++ h', s)
         -- bite attack
         0x03 -> do
             let h = [printf "%s bit %s!" (name (m !! from)) (name (m !! to))]
@@ -529,7 +516,7 @@ performAttack m from s =
             when dodge
                 (exit (Continue, m, h ++ [printf "%s dodged swiftly." $ name (m !! to)], s))
             (dmg, s) <- return $ attackDamage m from to s
-            (ts, m, h') <- return $ applyDamage dmg m from to
+            (ts, m, h', s) <- return $ applyDamage dmg m from to s
             return (ts, m, h ++ h', s)
         -- PK Beam a
         0x12 -> do
@@ -541,7 +528,7 @@ performAttack m from s =
             dmg <- return $ if (resistence (m !! to) .&. 0x02) /= 0
                 then if (dmg `div` 2) == 0 then 1 else dmg `div` 2
                 else dmg
-            (ts, m, h') <- return $ applyDamage dmg m from to
+            (ts, m, h', s) <- return $ applyDamage dmg m from to s
             return (ts, m, h ++ h', s)
         -- PK Beam b
         0x13 -> do
@@ -553,7 +540,7 @@ performAttack m from s =
             dmg <- return $ if (resistence (m !! to) .&. 0x02) /= 0
                 then if (dmg `div` 2) == 0 then 1 else dmg `div` 2
                 else dmg
-            (ts, m, h') <- return $ applyDamage dmg m from to
+            (ts, m, h', s) <- return $ applyDamage dmg m from to s
             return (ts, m, h ++ h', s)
         -- PK Beam r
         0x15 -> do
@@ -625,7 +612,7 @@ afConfusion (ts, m, h, s, am) exit =
         returnY (ts, m, h, s, am)
     else returnY (ts, m, h, s, am)
 
--- counts as tank and Miss rng
+-- deprecated: keep for history reasons
 afStatusRng :: ActionFun
 afStatusRng (ts, m, h, s, am) exit =
     returnY (ts, m, h, if status (m !! from am) .&. 0x80 /= 0 then nextRng s else s, am)
@@ -649,19 +636,10 @@ afCrit (ts, m, h, s, am) exit = do
         to = attackTarg (m !! fr)
     (crit, s) <- return $ cdRate m fr to s
     if crit then do
+        let oldDmg = fromMaybe 0x0000 (afDamage am)
         h <- return $ h ++ ["SMAAAASH!!"]
         (dmg, s) <- return $ critDamage m fr s
-        am <- return $ am { afDamage = Just dmg }
-        returnY (ts, m, h, s, am)
-    else returnN (ts, m, h, s, am)
-
-afDodgeSkip :: ActionFun
-afDodgeSkip (ts, m, h, s, am) exit =
-    let fr = from am
-        to = attackTarg (m !! fr) in
-    if status (m !! to) .&. 0x70 /= 0 || buff (m !! to) .&. 0x80 /= 0 then do
-        (dmg, s) <- return $ attackDamage m fr to s
-        am <- return $ am { afDamage = Just dmg }
+        am <- return $ am { afDamage = Just (oldDmg + dmg) }
         returnY (ts, m, h, s, am)
     else returnN (ts, m, h, s, am)
 
@@ -669,26 +647,91 @@ afDodge :: ActionFun
 afDodge (ts, m, h, s, am) exit = do
     let fr = from am
         to = attackTarg (m !! fr)
-    (dodge, s) <- return $ cdRate m to fr s
-    if not dodge then do
-        (dmg, s) <- return $ attackDamage m fr to s
-        am <- return $ am { afDamage = Just dmg }
-        returnN (ts, m, h, s, am)
-    else exit (Continue, m, h ++ [printf "%s dodged swiftly." $ name (m !! to)], s)
+    if status (m !! to) .&. 0x70 /= 0 || buff (m !! to) .&. 0x80 /= 0
+    then returnN (ts, m, h, s, am)
+    else do
+      (dodge, s) <- return $ cdRate m to fr s
+      if not dodge then returnN (ts, m, h, s, am)
+      else returnY (ts, m, h ++ [printf "%s dodged swiftly." $ name (m !! to)], s, am)
 
-afApplyDamage :: ActionFun
-afApplyDamage (ts, m, h, s, am) exit =
+afComputeDamage :: ActionFun
+afComputeDamage (ts, m, h, s, am) exit = do
     let fr = from am
         to = attackTarg (m !! fr)
-        dmg = fromMaybe undefined (afDamage am) in
-    if (buff (m !! to) .&. 0x04) /= 0 then do
-        (ts, m, h') <- return $ applyDamage dmg m to fr
+        oldDmg = fromMaybe 0 (afDamage am)
+    (dmg, s) <- return $ attackDamage m fr to s
+    am <- return $ am { afDamage = Just (oldDmg + dmg) }
+    returnY (ts, m, h, s, am)
+
+afApplyDamage :: ActionFun
+afApplyDamage (ts, m, h, s, am) exit = do
+    let fr = from am
+        to = attackTarg (m !! fr)
+        dmg = fromMaybe undefined (afDamage am)
+    (ts, m, h) <- if (buff (m !! to) .&. 0x04) /= 0 then do
+        (ts, m, h', s) <- return $ applyDamage dmg m to fr s
         h <- return $ h ++ [printf "%s bounced back the attack!" $ name (m !! to)] ++ h'
-        exit (ts, m, h, s)
-    else  do
-        (ts, m, h') <- return $ applyDamage dmg m fr to
+        return (ts, m, h)
+    else do
+        (ts, m, h', s) <- return $ applyDamage dmg m fr to s
         h <- return $ h ++ h'
-        exit (ts, m, h, s)
+        return (ts, m, h)
+    (case ts of
+     Continue -> returnY (ts, m, h, s, am)
+     _ -> exit (ts, m, h, s))
+
+afContinuous :: ActionFun
+afContinuous (ts, m, h, s, am) exit =
+    returnY (ts, m, h ++ ["Continuous attack!"], s, am)
+
+afExit :: ActionFun
+afExit (ts, m, h, s, _) exit =
+    exit (ts, m, h, s)
+
+-- attacks constants
+map01 = fromList [
+  (0, afConfusion),
+  (1, afAttacksText),
+  (2, afNoTarget),
+  (3, afCrit),
+  (4, afDodge),
+  (5, afComputeDamage),
+  (6, afApplyDamage),
+  (7, afExit)]
+dec01 = fromList [
+  (0, Next 1),
+  (1, Next 2),
+  (2, Next 3),
+  (3, NextYN (6, 4)),
+  (4, NextYN (7, 5)),
+  (5, Next 6),
+  (6, Next 7),
+  (7, Nil)]
+
+map02 = fromList [
+  (0, afConfusion),
+  (1, afAttacksText),
+  (2, afNoTarget),
+  (3, afDodge),
+  (4, afComputeDamage),
+  (5, afApplyDamage),
+  (6, afContinuous),
+  (7, afDodge),
+  (8, afComputeDamage),
+  (9, afApplyDamage),
+  (10, afExit)]
+dec02 = fromList [
+  (0, Next 1),
+  (1, Next 2),
+  (2, Next 3),
+  (3, NextYN (6, 4)),
+  (4, Next 5),
+  (5, Next 6),
+  (6, Next 7),
+  (7, NextYN (10, 8)),
+  (8, Next 9),
+  (9, Next 10),
+  (10, Nil)]
 
 performAttack2 :: [Member] -> Int -> Word16 -> ActionRet
 performAttack2 m from s =
@@ -696,14 +739,8 @@ performAttack2 m from s =
     runCont (callCC $ \exit -> callCC $ \exit2 -> do
     (ts, m, h, s) <- performStatus m from s exit2
     (case attackSel (m !! from) of
-     0x01 -> do
-         let map01 = fromList [(0, afConfusion), (1, afStatusRng), (2, afAttacksText),
-                               (3, afNoTarget),  (4, afCrit),      (5, afDodgeSkip),
-                               (6, afDodge),     (7, afStatusRng), (8, afApplyDamage)]
-             dec01 = fromList [(0, Next 1), (1, Next 2),        (2, Next 3),
-                               (2, Next 4), (4, NextYN (8, 5)), (5, NextYN (8, 6)),
-                               (6, Next 7), (7, Next 8),        (8, Nil)]
-         return $ runAction (Continue, m, [], s) from (map01, dec01)
+     0x01 -> return $ runAction (Continue, m, [], s) from (map01, dec01)
+     0x02 -> return $ runAction (Continue, m, [], s) from (map02, dec02)
      e -> error $ printf "performAttack: unsupported attack \"0x%02hhx\"." e)) id
 
 battleTurn :: [Member] -> Word16 -> ActionRet
