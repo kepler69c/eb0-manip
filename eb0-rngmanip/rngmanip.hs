@@ -502,39 +502,6 @@ performAttack m from s =
     runCont (callCC $ \exit -> callCC $ \exit2 -> do
     (ts, m, h, s) <- performStatus m from s exit2
     case attackSel (m !! from) of
-        0x01 -> do
-            -- confusion -> hitting random target
-            (to, s) <- performConfusion m from s
-            -- special status (tank) RNG (tank not implemented)
-            s <- return $ if status (m !! from) .&. 0x80 /= 0 then nextRng s else s
-            h <- return [printf "%s's attack!" $ name (m !! from)]
-            -- exit if enemy's gone
-            performNoTarget m from h s exit
-            -- crit
-            (crit, s) <- return $ cdRate m from to s
-            (s, h, dmg) <- if crit then do
-                h <- return $ h ++ ["SMAAAASH!!"]
-                (dmg, s) <- return $ critDamage m from s
-                return (s, h, dmg)
-            -- special status/buff avoids dodge
-            else if status (m !! to) .&. 0x70 /= 0 || buff (m !! to) .&. 0x80 /= 0 then do
-                (dmg, s) <- return $ attackDamage m from to s
-                return (s, h, dmg)
-            -- dodge
-            else do
-                (dodge, s) <- return $ cdRate m to from s
-                when dodge
-                    (exit (Continue, m, h ++ [printf "%s dodged swiftly." $ name (m !! to)], s))
-                (dmg, s) <- return $ attackDamage m from to s
-                return (s, h, dmg)
-            -- special status RNG (not implemented)
-            s <- return $ if status (m !! from) .&. 0x80 /= 0 then nextRng s else s
-            -- write damage, special 
-            (ts, m, h') <- if (buff (m !! to) .&. 0x04) /= 0 then do
-                (ts, m, h') <- return $ applyDamage dmg m to from
-                return (ts, m, h ++ [printf "%s bounced back the attack!" $ name (m !! to)] ++ h')
-            else return $ applyDamage dmg m from to
-            return (ts, m, h ++ h', s)
         -- continuous attack
         0x02 -> do
             -- confusion -> hitting random target
