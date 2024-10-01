@@ -5,9 +5,9 @@ import Text.Printf
 import Data.Maybe
 import Control.Monad.Cont
 import Control.Monad.Identity
-import Data.Map (Map, (!), fromList)
 import Control.Monad.Cont.Class
 import Control.Monad (when)
+import Data.Map (Map, (!), fromList)
 
 -- types
 data Range = All | Self | One deriving Show
@@ -32,15 +32,10 @@ data Member = Member
     , resistence :: Word8
     , buff ::       Word8
     , attackList :: [Word8]
+    , bag ::        [Word8]
     } deriving (Show, Eq)
 
 -- constants
--- note: 0x92 is bomber, 0x9a is 4 starmen
-encounterTable :: [Word8]
-encounterTable = 
-    [ 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99,
-      0x9a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 ]
-
 fightValMap :: [Word8]
 fightValMap =
     [ 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c, 0x0c,
@@ -88,9 +83,18 @@ emptyMember = Member {
     statusMask = 0x00,
     resistence = 0x00,
     buff =       0x00,
-    attackList = []
+    attackList = [],
+    bag =        []
 }
 
+-- note: 0x92 is bomber, 0x9a is 4 starmen
+-- TODO: maybe read from file ?
+encounterTable :: [Word8]
+encounterTable = 
+    [ 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99,
+      0x9a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 ]
+
+-- TODO: maybe read from file ?
 battleMembers = [
         Member {
             name =       "A",
@@ -109,7 +113,9 @@ battleMembers = [
             statusMask = 0xff,
             resistence = 0x00,
             buff =       0x00,
-            attackList = []
+            attackList = [],
+            bag =        [ 0x6e, 0x58, 0x68, 0x28,
+                           0x61, 0x03, 0x47, 0x00 ]
         },
         Member {
             name =       "B",
@@ -128,7 +134,9 @@ battleMembers = [
             statusMask = 0xff,
             resistence = 0x00,
             buff =       0x00,
-            attackList = []
+            attackList = [],
+            bag =        [ 0x00, 0x00, 0x00, 0x00,
+                           0x00, 0x00, 0x00, 0x00 ]
         },
         Member {
             name =       "EVE",
@@ -147,7 +155,8 @@ battleMembers = [
             statusMask = 0xff,
             resistence = 0x00,
             buff =       0x00,
-            attackList = []
+            attackList = [],
+            bag =        []
         },
         emptyMember,
         Member {
@@ -167,10 +176,9 @@ battleMembers = [
             statusMask = 0x9b,
             resistence = 0x00,
             buff =       0x00,
-            attackList = [
-                0x13, 0x13, 0x38, 0x15,
-                0x01, 0x01, 0x53, 0x53
-            ]
+            attackList = [ 0x13, 0x13, 0x38, 0x15,
+                           0x01, 0x01, 0x53, 0x53 ],
+            bag =        []
         },
         Member {
             name =       "LastStarmanB",
@@ -189,10 +197,9 @@ battleMembers = [
             statusMask = 0x9b,
             resistence = 0x00,
             buff =       0x00,
-            attackList = [
-                0x13, 0x13, 0x38, 0x15,
-                0x01, 0x01, 0x53, 0x53
-            ]
+            attackList = [ 0x13, 0x13, 0x38, 0x15,
+                           0x01, 0x01, 0x53, 0x53 ],
+            bag =        []
         },
         Member {
             name =       "LastStarmanC",
@@ -211,10 +218,9 @@ battleMembers = [
             statusMask = 0x9b,
             resistence = 0x00,
             buff =       0x00,
-            attackList = [
-                0x13, 0x13, 0x38, 0x15,
-                0x01, 0x01, 0x53, 0x53
-            ]
+            attackList = [ 0x13, 0x13, 0x38, 0x15,
+                           0x01, 0x01, 0x53, 0x53 ],
+            bag =        []
         },
         Member {
             name =       "LastStarmanD",
@@ -233,10 +239,9 @@ battleMembers = [
             statusMask = 0x9b,
             resistence = 0x00,
             buff =       0x00,
-            attackList = [
-                0x13, 0x13, 0x38, 0x15,
-                0x01, 0x01, 0x53, 0x53
-            ]
+            attackList = [ 0x13, 0x13, 0x38, 0x15,
+                           0x01, 0x01, 0x53, 0x53 ],
+            bag =        []
         }
     ]
 
@@ -397,6 +402,7 @@ battleEnd members
     | all (== 0x0000) (drop 4 $ map hp members) = Win
     | otherwise = Continue
 
+-- TODO: maybe change to CPS?
 applyDamage :: Word16 -> [Member] -> Int -> Int -> Word16 -> (TurnState, [Member], [String], Word16)
 applyDamage dmg members from to s =
     let mFrom = members !! from
@@ -406,11 +412,11 @@ applyDamage dmg members from to s =
         dmg''' = if (buff mTo .&. 0x08) /= 0x00 then dmg'' `div` 2 else dmg''
         dmg'''' = if dmg''' == 0x0000 then 0x0001 else dmg'''
         (members', history, s'') = 
-            if hp mTo < dmg''
+            if hp mTo < dmg''''
             then (insertAt members to (mTo { hp = 0x0000, status = status mTo .|. 0x80 }),
                   [printf "%s was beaten!" (name mTo)], s')
             else 
-                let mTo' = mTo { hp = hp mTo - dmg''' }
+                let mTo' = mTo { hp = hp mTo - dmg'''' }
                     (mTo'', history', s'') = if (status mTo' .&. 0x0c) /= 0x00 then
                         let s'' = nextRng s' in
                         if (s'' .&. 0xc0) == 0x00 then
@@ -426,7 +432,7 @@ applyDamage dmg members from to s =
                         else (mTo'', history', s''')
                     else (mTo'', history', s'') in
                 (insertAt members to mTo''', history'', s''') in
-    (battleEnd members', members', printf "%s suffered damage of %d." (name mTo) dmg''' : history, s'')
+    (battleEnd members', members', printf "%s suffered damage of %d." (name mTo) dmg'''' : history, s'')
 
 type ActionRet = (TurnState, [Member], [String], Word16)
 
@@ -510,30 +516,6 @@ performAttack m from s =
     runCont (callCC $ \exit -> callCC $ \exit2 -> do
     (ts, m, h, s) <- performStatus m from s exit2
     case attackSel (m !! from) of
-        -- PK Beam a
-        0x12 -> do
-            let h = [printf "%s tried PK Beam a!" $ name (m !! from)]
-                cpp = pp (m !! from)
-                dmg = 0x1e
-            when (cpp < 0x04) (exit (Continue, m, h ++ ["Not enough PP!"], s))
-            m <- return $ insertAt m from (m !! from) { pp = cpp - 0x04 }
-            dmg <- return $ if (resistence (m !! to) .&. 0x02) /= 0x00
-                then if (dmg `div` 2) == 0x0000 then 0x0001 else dmg `div` 2
-                else dmg
-            (ts, m, h', s) <- return $ applyDamage dmg m from to s
-            return (ts, m, h ++ h', s)
-        -- PK Beam b
-        0x13 -> do
-            let h = [printf "%s tried PK Beam b!" $ name (m !! from)]
-                cpp = pp (m !! from)
-                dmg = 0x50
-            when (cpp < 0x07) (exit (Continue, m, h ++ ["Not enough PP!"], s))
-            m <- return $ insertAt m from (m !! from) { pp = cpp - 0x07 }
-            dmg <- return $ if (resistence (m !! to) .&. 0x02) /= 0x00
-                then if (dmg `div` 2) == 0x0000 then 1 else dmg `div` 2
-                else dmg
-            (ts, m, h', s) <- return $ applyDamage dmg m from to s
-            return (ts, m, h ++ h', s)
         -- PK Beam r
         0x15 -> do
             let h = [printf "%s tried PK Beam r!" $ name (m !! from)]
@@ -557,14 +539,20 @@ performAttack m from s =
         e -> error $ printf "performAttack: unsupported attack \"0x%02hhx\"." e) id
 
 -- actions framework
-data ActionMem = ActionMem
-    { afDamage :: Maybe Word16
-    , afPSIDamage :: Maybe Word16
+data ActionParam = ActionParam
+    { afPSIDamage :: Maybe Word16
     , afPP :: Maybe Word16 }
+
+data ActionMem = ActionMem
+    { afFrom :: Int
+    , afTo :: Int
+    , afDamage :: Maybe Word16
+    , afParam :: ActionParam }
 
 type ActionCont = (TurnState, [Member], [String], Word16, ActionMem)
 
-type ActionFun = ActionCont -> Int -> (ActionRet -> ContT ActionRet Identity (Bool, ActionCont)) -> ContT ActionRet Identity (Bool, ActionCont)
+type ActionFun = ActionCont -> (ActionRet -> ContT ActionRet Identity (Bool, ActionCont)) ->
+                 ContT ActionRet Identity (Bool, ActionCont)
 returnY x = return (True, x)
 returnN x = return (False, x)
 
@@ -573,14 +561,16 @@ type ActionMap = Map Int ActionFun
 data ActionDecNode = Nil | Next Int | NextYN (Int, Int)
 type ActionDec = Map Int ActionDecNode
 
-type ActionGraph = (ActionMap, ActionDec, ActionMem)
+type ActionGraph = (ActionMap, ActionDec, ActionParam)
 
+-- turn loop based on attack graphs
 runAction :: ActionRet -> Int -> ActionGraph -> ActionRet
-runAction (ts, m, h, s) fr (amap, adec, afm) =
-    let initCont = (ts, m, h, s, afm) in
+runAction (ts, m, h, s) fr (amap, adec, afp) =
+    let initMem = ActionMem { afFrom = fr, afTo = attackTarg (m !! fr), afDamage = Nothing, afParam = afp }
+        initCont = (ts, m, h, s, initMem) in
     runCont (callCC $ \exit -> do
         (loop, (cont, i)) <- label (initCont, 0)
-        (b, cont) <- (amap ! i) cont fr exit
+        (b, cont) <- (amap ! i) cont exit
         (case (adec ! i, b) of
          (Next j, _) -> loop (cont, j)
          (NextYN (j, _), True) -> loop (cont, j)
@@ -588,8 +578,9 @@ runAction (ts, m, h, s) fr (amap, adec, afm) =
          _ -> undefined)) id
 
 afConfusion :: ActionFun
-afConfusion (ts, m, h, s, am) fr exit =
-    let to = attackTarg (m !! fr) in
+afConfusion (ts, m, h, s, am) exit =
+    let fr = afFrom am
+        to = afTo am in
     if (status (m !! fr) .&. 0x08) /= 0x00 then do
         let loop s =
                 let s' = nextRng s
@@ -601,26 +592,23 @@ afConfusion (ts, m, h, s, am) fr exit =
         returnY (ts, m, h, s, am)
     else returnY (ts, m, h, s, am)
 
--- deprecated: keep for history reasons
-afStatusRng :: ActionFun
-afStatusRng (ts, m, h, s, am) fr exit =
-    returnY (ts, m, h, if status (m !! fr) .&. 0x80 /= 0x00 then nextRng s else s, am)
-
 afAttacksText :: ActionFun
-afAttacksText (ts, m, h, s, am) fr exit =
-    returnY (ts, m, h ++ [printf "%s's attack!" $ name (m !! fr)], s, am)
+afAttacksText (ts, m, h, s, am) exit =
+    returnY (ts, m, h ++ [printf "%s's attack!" $ name (m !! afFrom am)], s, am)
 
 afNoTarget :: ActionFun
-afNoTarget (ts, m, h, s, am) fr exit =
-    let to = attackTarg (m !! fr) in
+afNoTarget (ts, m, h, s, am) exit =
+    let fr = afFrom am
+        to = afTo am in
     if statusMask (m !! fr) == 0x00 || not (alive (m !! fr)) ||
        statusMask (m !! to) == 0x00 || not (alive (m !! to))
     then exit (Continue, m, h ++ [printf "%s was already gone." $ name (m !! to)], s)
     else returnY (ts, m, h, s, am)
 
 afCrit :: ActionFun
-afCrit (ts, m, h, s, am) fr exit = do
-    let to = attackTarg (m !! fr)
+afCrit (ts, m, h, s, am) exit = do
+    let fr = afFrom am
+        to = afTo am
     (crit, s) <- return $ cdRate m fr to s
     if crit then do
         let oldDmg = fromMaybe 0x0000 (afDamage am)
@@ -631,8 +619,9 @@ afCrit (ts, m, h, s, am) fr exit = do
     else returnN (ts, m, h, s, am)
 
 afDodge :: ActionFun
-afDodge (ts, m, h, s, am) fr exit = do
-    let to = attackTarg (m !! fr)
+afDodge (ts, m, h, s, am) exit = do
+    let fr = afFrom am
+        to = afTo am
     if status (m !! to) .&. 0x70 /= 0x00 || buff (m !! to) .&. 0x80 /= 0x00
     then returnN (ts, m, h, s, am)
     else do
@@ -641,47 +630,52 @@ afDodge (ts, m, h, s, am) fr exit = do
       else returnY (ts, m, h ++ [printf "%s dodged swiftly." $ name (m !! to)], s, am)
 
 afDamageCompute :: ActionFun
-afDamageCompute (ts, m, h, s, am) fr exit = do
-    let to = attackTarg (m !! fr)
+afDamageCompute (ts, m, h, s, am) exit = do
+    let fr = afFrom am
+        to = afTo am
         oldDmg = fromMaybe 0x0000 (afDamage am)
         dmg = attackDamage m fr to
     am <- return $ am { afDamage = Just (oldDmg + dmg) }
     returnY (ts, m, h, s, am)
 
 afApplyDamage :: ActionFun
-afApplyDamage (ts, m, h, s, am) fr exit = do
-    let to = attackTarg (m !! fr)
+afApplyDamage (ts, m, h, s, am) exit = do
+    let fr = afFrom am
+        to = afTo am
         dmg = fromMaybe undefined (afDamage am)
-    (ts, m, h) <- if (buff (m !! to) .&. 0x04) /= 0x00 then do
-        (ts, m, h', s) <- return $ applyDamage dmg m to fr s
-        h <- return $ h ++ [printf "%s bounced back the attack!" $ name (m !! to)] ++ h'
-        return (ts, m, h)
-    else do
-        (ts, m, h', s) <- return $ applyDamage dmg m fr to s
-        h <- return $ h ++ h'
-        return (ts, m, h)
+    (fr, to, am, h) <- if (buff (m !! to) .&. 0x04) /= 0x00 then do
+        -- swap caster
+        let fr = afTo am
+            to = afFrom am
+        am <- return $ am { afFrom = fr, afTo = to }
+        return (fr, to, am, h ++ [printf "%s bounced back the attack!" $ name (m !! to)])
+    else return (fr, to, am, h)
+    (ts, m, h', s) <- return $ applyDamage dmg m fr to s
+    h <- return $ h ++ h'
     (case ts of
      Continue -> returnY (ts, m, h, s, am)
      _ -> exit (ts, m, h, s))
 
 afContinuous :: ActionFun
-afContinuous (ts, m, h, s, am) _ exit =
+afContinuous (ts, m, h, s, am) exit =
     returnY (ts, m, h ++ ["Continuous attack!"], s, am)
 
 afExit :: ActionFun
-afExit (ts, m, h, s, _) _ exit = do
+afExit (ts, m, h, s, _) exit = do
     if all (\m -> statusMask m == 0x00 || status m .&. 0xe0 /= 0x00) m then
         exit (Loss, m, h ++ ["You lost the battle."], s)
     else exit (ts, m, h, s)
 
 afBitText :: ActionFun
-afBitText (ts, m, h, s, am) fr exit =
-    let to = attackTarg (m !! fr) in
+afBitText (ts, m, h, s, am) exit =
+    let fr = afFrom am
+        to = afTo am in
     returnY (ts, m, h ++ [printf "%s bit %s!" (name (m !! fr)) (name (m !! to))], s, am)
 
 afCheckPP :: ActionFun
-afCheckPP (ts, m, h, s, am) fr exit =
-    let mpp = fromMaybe undefined (afPP am) in
+afCheckPP (ts, m, h, s, am) exit =
+    let fr = afFrom am
+        mpp = fromMaybe undefined (afPP $ afParam am) in
     if buff (m !! fr) .&. 0x40 /= 0 then
         returnN (ts, m, h ++ ["But, the PSI was blocked."], s, am)
     else if pp (m !! fr) < mpp then
@@ -691,14 +685,41 @@ afCheckPP (ts, m, h, s, am) fr exit =
         returnY (ts, m, h, s, am)
 
 afPSIDamageCompute :: ActionFun
-afPSIDamageCompute (ts, m, h, s, am) fr exit =
-    returnY (ts, m, h, s, am { afDamage = Just $ fromMaybe undefined $ afPSIDamage am })
+afPSIDamageCompute (ts, m, h, s, am) exit =
+    returnY (ts, m, h, s, am { afDamage = Just $ fromMaybe undefined $ afPSIDamage $ afParam am })
 
-afPSIaText :: ActionFun
-afPSIaText (ts, m, h, s, am) fr exit =
-    returnY (ts, m, h ++ [printf "%s tried PK Beam a!" (name (m !! fr))], s, am)
+afPsiBeamAText :: ActionFun
+afPsiBeamAText (ts, m, h, s, am) exit =
+    returnY (ts, m, h ++ [printf "%s tried PK Beam a!" (name (m !! afFrom am))], s, am)
 
--- attacks constants
+afPsiBeamBText :: ActionFun
+afPsiBeamBText (ts, m, h, s, am) exit =
+    returnY (ts, m, h ++ [printf "%s tried PK Beam B!" (name (m !! afFrom am))], s, am)
+
+afPsiBeamRText :: ActionFun
+afPsiBeamRText (ts, m, h, s, am) exit =
+    returnY (ts, m, h ++ [printf "%s tried PK Beam r!" (name (m !! afFrom am))], s, am)
+
+afBeamFranklin :: ActionFun
+afBeamFranklin (ts, m, h, s, am) exit =
+    let fr = afFrom am
+        to = afTo am in
+    if to < 4 && elem 0x68 (bag (m !! to)) then
+        returnY (ts, m, h ++ [printf "But, %s's FranklinBadge bounced back the Beam!" $ name (m !! to)],
+                 s, am)
+    else returnN (ts, m, h, s, am)
+
+afBeamResistence :: ActionFun
+afBeamResistence (ts, m, h, s, am) exit =
+    let fr = afFrom am
+        to = afTo am in
+    if resistence (m !! to) .&. 0x80 /= 0x00 then
+        returnY (ts, m, h ++ [printf "There was no effect on %s." $ name (m !! to)], s, am)
+    else returnN (ts, m, h, s, am)
+
+-- TODO: undestand the monster happening at the end of beam 15
+
+-- attack DAG constants
 map01 = fromList [
     (0, afConfusion),
     (1, afAttacksText),
@@ -717,9 +738,8 @@ dec01 = fromList [
     (5, Next 6),
     (6, Next 7),
     (7, Nil)]
-afm01 = ActionMem
-    { afDamage = Nothing
-    , afPSIDamage = Nothing
+afp01 = ActionParam
+    { afPSIDamage = Nothing
     , afPP = Nothing }
 
 map02 = fromList [
@@ -746,9 +766,8 @@ dec02 = fromList [
     (8, Next 9),
     (9, Next 10),
     (10, Nil)]
-afm02 = ActionMem
-    { afDamage = Nothing
-    , afPSIDamage = Nothing
+afp02 = ActionParam
+    { afPSIDamage = Nothing
     , afPP = Nothing }
 
 map03 = fromList [
@@ -767,13 +786,12 @@ dec03 = fromList [
     (4, NextYN (6, 5)),
     (5, Next 6),
     (6, Nil)]
-afm03 = ActionMem
-    { afDamage = Nothing
-    , afPSIDamage = Nothing
+afp03 = ActionParam
+    { afPSIDamage = Nothing
     , afPP = Nothing }
 
 map12 = fromList [
-    (0, afPSIaText),
+    (0, afPsiBeamAText),
     (1, afCheckPP),
     (2, afPSIDamageCompute),
     (3, afConfusion),
@@ -788,10 +806,29 @@ dec12 = fromList [
     (4, Next 5),
     (5, Next 6),
     (6, Nil)]
-afm12 = ActionMem
-    { afDamage = Nothing
-    , afPSIDamage = Just 0x1e
+afp12 = ActionParam
+    { afPSIDamage = Just 0x1e
     , afPP = Just 0x04 }
+
+map13 = fromList [
+    (0, afPsiBeamBText),
+    (1, afCheckPP),
+    (2, afPSIDamageCompute),
+    (3, afConfusion),
+    (4, afNoTarget),
+    (5, afApplyDamage),
+    (6, afExit)]
+dec13 = fromList [
+    (0, Next 1),
+    (1, NextYN (6, 2)),
+    (2, Next 3),
+    (3, Next 4),
+    (4, Next 5),
+    (5, Next 6),
+    (6, Nil)]
+afp13 = ActionParam
+    { afPSIDamage = Just 0x50
+    , afPP = Just 0x07 }
 
 performAttack2 :: [Member] -> Int -> Word16 -> ActionRet
 performAttack2 m from s =
@@ -799,11 +836,13 @@ performAttack2 m from s =
     runCont (callCC $ \exit -> callCC $ \exit2 -> do
     (ts, m, h, s) <- performStatus m from s exit2
     (case attackSel (m !! from) of
-     0x01 -> return $ runAction (Continue, m, [], s) from (map01, dec01, afm01)
-     0x02 -> return $ runAction (Continue, m, [], s) from (map02, dec02, afm02)
-     0x03 -> return $ runAction (Continue, m, [], s) from (map03, dec03, afm03)
-     0x12 -> return $ runAction (Continue, m, [], s) from (map12, dec12, afm12)
+     0x01 -> runGraph (map01, dec01, afp01)
+     0x02 -> runGraph (map02, dec02, afp02)
+     0x03 -> runGraph (map03, dec03, afp03)
+     0x12 -> runGraph (map12, dec12, afp12)
+     0x13 -> runGraph (map13, dec13, afp13)
      e -> error $ printf "performAttack: unsupported attack \"0x%02hhx\"." e)) id
+    where runGraph g = return (runAction (Continue, m, [], s) from g)
 
 battleTurn :: [Member] -> Word16 -> ActionRet
 battleTurn members seed =
