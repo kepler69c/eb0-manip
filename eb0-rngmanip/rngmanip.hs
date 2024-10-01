@@ -396,11 +396,12 @@ critDamage members from =
     valueRoll (attack (members !! from))
 
 battleEnd :: [Member] -> TurnState
-battleEnd members
-    | hp (head members) == 0x0000 = Loss
+battleEnd (m : ml)
+    | hp m == 0x0000 = Loss
     | all (== 0x0000) (take 4 $ map hp members) = Loss
     | all (== 0x0000) (drop 4 $ map hp members) = Win
     | otherwise = Continue
+    where members = m : ml
 
 -- TODO: maybe change to CPS?
 applyDamage :: Word16 -> [Member] -> Int -> Int -> Word16 -> (TurnState, [Member], [String], Word16)
@@ -516,15 +517,6 @@ performAttack m from s =
     runCont (callCC $ \exit -> callCC $ \exit2 -> do
     (ts, m, h, s) <- performStatus m from s exit2
     case attackSel (m !! from) of
-        -- PK Beam r
-        0x15 -> do
-            let h = [printf "%s tried PK Beam r!" $ name (m !! from)]
-                cpp = pp (m !! from)
-            when (cpp < 0x0c) (exit (Continue, m, h ++ ["Not enough PP!"], s))
-            m <- return $ insertAt m from (m !! from) { pp = cpp - 0x0c }
-            h <- return $ h ++ [printf "But, %s's FranklinBadge bounced back the Beam!" $ name (m !! to)]
-                            ++ [printf "There was no effect on %s." $ name (m !! to)]
-            return (Continue, m, h, s)
         -- PSIShield a (writes 0x10 to ally's shield? data - reduces PK attacks)
         0x38 -> do
             let h = [printf "%s tried PSIShield a!" $ name (m !! from)]
@@ -541,7 +533,8 @@ performAttack m from s =
 -- actions framework
 data ActionParam = ActionParam
     { afPSIDamage :: Maybe Word16
-    , afPP :: Maybe Word16 }
+    , afPP :: Maybe Word16
+    , afBuff :: Maybe Word8 }
 
 data ActionMem = ActionMem
     { afFrom :: Int
@@ -644,11 +637,9 @@ afApplyDamage (ts, m, h, s, am) exit = do
         to = afTo am
         dmg = fromMaybe undefined (afDamage am)
     (fr, to, am, h) <- if (buff (m !! to) .&. 0x04) /= 0x00 then do
-        -- swap caster
-        let fr = afTo am
-            to = afFrom am
-        am <- return $ am { afFrom = fr, afTo = to }
-        return (fr, to, am, h ++ [printf "%s bounced back the attack!" $ name (m !! to)])
+        -- swap users
+        am <- return $ am { afFrom = to, afTo = fr }
+        return (to, fr, am, h ++ [printf "%s bounced back the attack!" $ name (m !! to)])
     else return (fr, to, am, h)
     (ts, m, h', s) <- return $ applyDamage dmg m fr to s
     h <- return $ h ++ h'
@@ -705,19 +696,43 @@ afBeamFranklin (ts, m, h, s, am) exit =
     let fr = afFrom am
         to = afTo am in
     if to < 4 && elem 0x68 (bag (m !! to)) then
+        -- swapping users
         returnY (ts, m, h ++ [printf "But, %s's FranklinBadge bounced back the Beam!" $ name (m !! to)],
-                 s, am)
+                 s, am { afFrom = to, afTo = fr })
     else returnN (ts, m, h, s, am)
 
 afBeamResistence :: ActionFun
 afBeamResistence (ts, m, h, s, am) exit =
-    let fr = afFrom am
-        to = afTo am in
+    let to = afTo am in
     if resistence (m !! to) .&. 0x80 /= 0x00 then
         returnY (ts, m, h ++ [printf "There was no effect on %s." $ name (m !! to)], s, am)
     else returnN (ts, m, h, s, am)
 
--- TODO: undestand the monster happening at the end of beam 15
+afInstantKill :: ActionFun
+afInstantKill (ts, m, h, s, am) exit = do
+    let fr = afFrom am
+        to = afTo am
+    m <- return $ insertAt m to (m !! to) { status = 0x80, hp = 0x0000 }
+    returnY (ts, m, h ++ [printf "%s was beaten!" $ name (m !! to)], s, am)
+
+afPlaceBuff :: ActionFun
+afPlaceBuff (ts, m, h, s, am) exit =
+    let fr = afFrom am
+        to = afTo am
+        pBuff = fromMaybe undefined $ afBuff $ afParam am in
+    if buff (m !! to) .&. pBuff /= 0x00 then
+        returnN (ts, m, h ++ [printf "There was no effect on %s." $ name (m !! to)], s, am)
+    else do
+        m <- return $ insertAt m to (m !! to) { buff = buff (m !! to) .|. pBuff }
+        returnY (ts, m, h, s, am)
+
+afShieldedText :: ActionFun
+afShieldedText (ts, m, h, s, am) exit =
+    returnY (ts, m, h ++ [printf "%s was shielded." (name (m !! afTo am))], s, am)
+
+afPSIShieldAText :: ActionFun
+afPSIShieldAText (ts, m, h, s, am) exit =
+    returnY (ts, m, h ++ [printf "%s tried PSIShield a!" (name (m !! afFrom am))], s, am)
 
 -- attack DAG constants
 map01 = fromList [
@@ -740,7 +755,8 @@ dec01 = fromList [
     (7, Nil)]
 afp01 = ActionParam
     { afPSIDamage = Nothing
-    , afPP = Nothing }
+    , afPP = Nothing
+    , afBuff = Nothing }
 
 map02 = fromList [
     (0, afConfusion),
@@ -768,7 +784,8 @@ dec02 = fromList [
     (10, Nil)]
 afp02 = ActionParam
     { afPSIDamage = Nothing
-    , afPP = Nothing }
+    , afPP = Nothing
+    , afBuff = Nothing }
 
 map03 = fromList [
     (0, afConfusion),
@@ -788,7 +805,8 @@ dec03 = fromList [
     (6, Nil)]
 afp03 = ActionParam
     { afPSIDamage = Nothing
-    , afPP = Nothing }
+    , afPP = Nothing
+    , afBuff = Nothing }
 
 map12 = fromList [
     (0, afPsiBeamAText),
@@ -800,7 +818,7 @@ map12 = fromList [
     (6, afExit)]
 dec12 = fromList [
     (0, Next 1),
-    (1, NextYN (6, 2)),
+    (1, NextYN (2, 6)),
     (2, Next 3),
     (3, Next 4),
     (4, Next 5),
@@ -808,7 +826,8 @@ dec12 = fromList [
     (6, Nil)]
 afp12 = ActionParam
     { afPSIDamage = Just 0x1e
-    , afPP = Just 0x04 }
+    , afPP = Just 0x04
+    , afBuff = Nothing }
 
 map13 = fromList [
     (0, afPsiBeamBText),
@@ -820,7 +839,7 @@ map13 = fromList [
     (6, afExit)]
 dec13 = fromList [
     (0, Next 1),
-    (1, NextYN (6, 2)),
+    (1, NextYN (2, 6)),
     (2, Next 3),
     (3, Next 4),
     (4, Next 5),
@@ -828,7 +847,52 @@ dec13 = fromList [
     (6, Nil)]
 afp13 = ActionParam
     { afPSIDamage = Just 0x50
-    , afPP = Just 0x07 }
+    , afPP = Just 0x07
+    , afBuff = Nothing }
+
+map15 = fromList [
+    (0, afPsiBeamRText),
+    (1, afCheckPP),
+    (2, afConfusion),
+    (3, afNoTarget),
+    (4, afBeamFranklin),
+    (5, afBeamResistence),
+    (6, afInstantKill),
+    (7, afExit)]
+dec15 = fromList [
+    (0, Next 1),
+    (1, NextYN (2, 7)),
+    (2, Next 3),
+    (3, Next 4),
+    (4, Next 5),
+    (5, NextYN (7, 6)),
+    (6, Next 7),
+    (7, Nil)]
+afp15 = ActionParam 
+    { afPSIDamage = Nothing
+    , afPP = Just 0x10
+    , afBuff = Nothing }
+
+map38 = fromList [
+    (0, afPSIShieldAText),
+    (1, afCheckPP),
+    (2, afConfusion),
+    (3, afNoTarget),
+    (4, afPlaceBuff),
+    (5, afShieldedText),
+    (6, afExit)]
+dec38 = fromList [
+    (0, Next 1),
+    (1, NextYN (2, 6)),
+    (2, Next 3),
+    (3, Next 4),
+    (4, NextYN (5, 6)),
+    (5, Next 6),
+    (6, Nil)]
+afp38 = ActionParam 
+    { afPSIDamage = Nothing
+    , afPP = Just 0x10
+    , afBuff = Just 0x10 }
 
 performAttack2 :: [Member] -> Int -> Word16 -> ActionRet
 performAttack2 m from s =
@@ -836,11 +900,20 @@ performAttack2 m from s =
     runCont (callCC $ \exit -> callCC $ \exit2 -> do
     (ts, m, h, s) <- performStatus m from s exit2
     (case attackSel (m !! from) of
+     -- normal attack
      0x01 -> runGraph (map01, dec01, afp01)
+     -- continuous attack
      0x02 -> runGraph (map02, dec02, afp02)
+     -- bite attack
      0x03 -> runGraph (map03, dec03, afp03)
+     -- PK Beam a
      0x12 -> runGraph (map12, dec12, afp12)
+     -- PK Beam b
      0x13 -> runGraph (map13, dec13, afp13)
+     -- PK Beam r
+     0x15 -> runGraph (map15, dec15, afp15)
+     -- PSIShield a
+     0x38 -> runGraph (map38, dec38, afp38)
      e -> error $ printf "performAttack: unsupported attack \"0x%02hhx\"." e)) id
     where runGraph g = return (runAction (Continue, m, [], s) from g)
 
@@ -876,33 +949,33 @@ battleTurn members seed =
         Just x -> x
         Nothing -> last scan
 
-nbAlive :: [Member] -> Int
-nbAlive = length . filter alive
-
-getEncounters :: Word16 -> Word8 -> [(Word16, Bool)]
-getEncounters seed threshold =
-    let rngs = iterate nextRng seed 
-        rh rng = (rng, to8 (rng .>>. 8) < threshold) in
-    map rh rngs
- 
-getPresses :: Word16 -> Word8 -> Int -> [(Int, [(Word16, Bool)])]
-getPresses seed threshold w =
-    let rngs = drop 1 $ iterate nextRng seed 
-        windows = map (\x -> take w $ getEncounters x threshold) rngs
-        analyze_win = map (\x -> (x, any snd x)) windows
-        applyPress ls =
-            let (l, r) = break snd ls in
-            l ++ [head r] ++ applyPress (drop 24 r)
-        applied = applyPress analyze_win 
-        splits = splitWhen snd applied
-        keep = map fst $ filter snd applied in 
-    zip (map (\x -> 1 + length x) splits) keep
-
-getEnemy :: Word16 -> [Word8] -> (Word16, Word8)
-getEnemy seed encounterTable =
-    let rngs = iterate nextRng seed in
-    head $ dropWhile (\(_, x) -> x == 0x00) $ map (\x ->
-        (x, encounterTable !! fromIntegral (to8 (x .>>. 12)))) rngs
+-- nbAlive :: [Member] -> Int
+-- nbAlive = length . filter alive
+-- 
+-- getEncounters :: Word16 -> Word8 -> [(Word16, Bool)]
+-- getEncounters seed threshold =
+--     let rngs = iterate nextRng seed 
+--         rh rng = (rng, to8 (rng .>>. 8) < threshold) in
+--     map rh rngs
+--  
+-- getPresses :: Word16 -> Word8 -> Int -> [(Int, [(Word16, Bool)])]
+-- getPresses seed threshold w =
+--     let rngs = drop 1 $ iterate nextRng seed 
+--         windows = map (\x -> take w $ getEncounters x threshold) rngs
+--         analyze_win = map (\x -> (x, any snd x)) windows
+--         applyPress ls =
+--             let (l, r) = break snd ls in
+--             l ++ [head r] ++ applyPress (drop 24 r)
+--         applied = applyPress analyze_win 
+--         splits = splitWhen snd applied
+--         keep = map fst $ filter snd applied in 
+--     zip (map (\x -> 1 + length x) splits) keep
+-- 
+-- getEnemy :: Word16 -> [Word8] -> (Word16, Word8)
+-- getEnemy seed encounterTable =
+--     let rngs = iterate nextRng seed in
+--     head $ dropWhile (\(_, x) -> x == 0x00) $ map (\x ->
+--         (x, encounterTable !! fromIntegral (to8 (x .>>. 12)))) rngs
 
 main = do
     let (i, s1) = selectOpponent battleMembers 0 0xec64
