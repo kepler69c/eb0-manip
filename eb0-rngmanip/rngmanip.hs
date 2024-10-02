@@ -510,26 +510,6 @@ performCrit m from h s = do
         return (s, h, Just dmg)
     else return (s, h, Nothing)
 
--- TODO: DAG of attack behavior (CPS)
-performAttack :: [Member] -> Int -> Word16 -> ActionRet
-performAttack m from s =
-    let to = attackTarg (m !! from) in
-    runCont (callCC $ \exit -> callCC $ \exit2 -> do
-    (ts, m, h, s) <- performStatus m from s exit2
-    case attackSel (m !! from) of
-        -- PSIShield a (writes 0x10 to ally's shield? data - reduces PK attacks)
-        0x38 -> do
-            let h = [printf "%s tried PSIShield a!" $ name (m !! from)]
-                cpp = pp (m !! from)
-            when (cpp < 0x04) (exit (Continue, m, h ++ ["Not enough PP!"], s))
-            m <- return $ insertAt m from (m !! from) { pp = cpp - 0x04 }
-            h <- return $ h ++ [printf "%s was shielded." $ name (m !! to)]
-            m <- return $ insertAt m to (m !! to) { buff = buff (m !! to) .|. 0x10 }
-            return (Continue, m, h, s)
-        -- ready for an attack
-        0x53 -> return (Continue, m, [printf "%s is ready for an attack." $ name (m !! from)], s)
-        e -> error $ printf "performAttack: unsupported attack \"0x%02hhx\"." e) id
-
 -- actions framework
 data ActionParam = ActionParam
     { afPSIDamage :: Maybe Word16
@@ -571,7 +551,7 @@ runAction (ts, m, h, s) fr (amap, adec, afp) =
          _ -> undefined)) id
 
 afConfusion :: ActionFun
-afConfusion (ts, m, h, s, am) exit =
+afConfusion (ts, m, h, s, am) _ =
     let fr = afFrom am
         to = afTo am in
     if (status (m !! fr) .&. 0x08) /= 0x00 then do
@@ -599,7 +579,7 @@ afNoTarget (ts, m, h, s, am) exit =
     else returnY (ts, m, h, s, am)
 
 afCrit :: ActionFun
-afCrit (ts, m, h, s, am) exit = do
+afCrit (ts, m, h, s, am) _ = do
     let fr = afFrom am
         to = afTo am
     (crit, s) <- return $ cdRate m fr to s
@@ -612,7 +592,7 @@ afCrit (ts, m, h, s, am) exit = do
     else returnN (ts, m, h, s, am)
 
 afDodge :: ActionFun
-afDodge (ts, m, h, s, am) exit = do
+afDodge (ts, m, h, s, am) _ = do
     let fr = afFrom am
         to = afTo am
     if status (m !! to) .&. 0x70 /= 0x00 || buff (m !! to) .&. 0x80 /= 0x00
@@ -623,7 +603,7 @@ afDodge (ts, m, h, s, am) exit = do
       else returnY (ts, m, h ++ [printf "%s dodged swiftly." $ name (m !! to)], s, am)
 
 afDamageCompute :: ActionFun
-afDamageCompute (ts, m, h, s, am) exit = do
+afDamageCompute (ts, m, h, s, am) _ = do
     let fr = afFrom am
         to = afTo am
         oldDmg = fromMaybe 0x0000 (afDamage am)
@@ -648,7 +628,7 @@ afApplyDamage (ts, m, h, s, am) exit = do
      _ -> exit (ts, m, h, s))
 
 afContinuous :: ActionFun
-afContinuous (ts, m, h, s, am) exit =
+afContinuous (ts, m, h, s, am) _ =
     returnY (ts, m, h ++ ["Continuous attack!"], s, am)
 
 afExit :: ActionFun
@@ -658,13 +638,13 @@ afExit (ts, m, h, s, _) exit = do
     else exit (ts, m, h, s)
 
 afBitText :: ActionFun
-afBitText (ts, m, h, s, am) exit =
+afBitText (ts, m, h, s, am) _ =
     let fr = afFrom am
         to = afTo am in
     returnY (ts, m, h ++ [printf "%s bit %s!" (name (m !! fr)) (name (m !! to))], s, am)
 
 afCheckPP :: ActionFun
-afCheckPP (ts, m, h, s, am) exit =
+afCheckPP (ts, m, h, s, am) _ =
     let fr = afFrom am
         mpp = fromMaybe undefined (afPP $ afParam am) in
     if buff (m !! fr) .&. 0x40 /= 0 then
@@ -676,23 +656,23 @@ afCheckPP (ts, m, h, s, am) exit =
         returnY (ts, m, h, s, am)
 
 afPSIDamageCompute :: ActionFun
-afPSIDamageCompute (ts, m, h, s, am) exit =
+afPSIDamageCompute (ts, m, h, s, am) _ =
     returnY (ts, m, h, s, am { afDamage = Just $ fromMaybe undefined $ afPSIDamage $ afParam am })
 
 afPsiBeamAText :: ActionFun
-afPsiBeamAText (ts, m, h, s, am) exit =
+afPsiBeamAText (ts, m, h, s, am) _ =
     returnY (ts, m, h ++ [printf "%s tried PK Beam a!" (name (m !! afFrom am))], s, am)
 
 afPsiBeamBText :: ActionFun
-afPsiBeamBText (ts, m, h, s, am) exit =
+afPsiBeamBText (ts, m, h, s, am) _ =
     returnY (ts, m, h ++ [printf "%s tried PK Beam B!" (name (m !! afFrom am))], s, am)
 
 afPsiBeamRText :: ActionFun
-afPsiBeamRText (ts, m, h, s, am) exit =
+afPsiBeamRText (ts, m, h, s, am) _ =
     returnY (ts, m, h ++ [printf "%s tried PK Beam r!" (name (m !! afFrom am))], s, am)
 
 afBeamFranklin :: ActionFun
-afBeamFranklin (ts, m, h, s, am) exit =
+afBeamFranklin (ts, m, h, s, am) _ =
     let fr = afFrom am
         to = afTo am in
     if to < 4 && elem 0x68 (bag (m !! to)) then
@@ -702,21 +682,21 @@ afBeamFranklin (ts, m, h, s, am) exit =
     else returnN (ts, m, h, s, am)
 
 afBeamResistence :: ActionFun
-afBeamResistence (ts, m, h, s, am) exit =
+afBeamResistence (ts, m, h, s, am) _ =
     let to = afTo am in
     if resistence (m !! to) .&. 0x80 /= 0x00 then
         returnY (ts, m, h ++ [printf "There was no effect on %s." $ name (m !! to)], s, am)
     else returnN (ts, m, h, s, am)
 
 afInstantKill :: ActionFun
-afInstantKill (ts, m, h, s, am) exit = do
+afInstantKill (ts, m, h, s, am) _ = do
     let fr = afFrom am
         to = afTo am
     m <- return $ insertAt m to (m !! to) { status = 0x80, hp = 0x0000 }
     returnY (ts, m, h ++ [printf "%s was beaten!" $ name (m !! to)], s, am)
 
 afPlaceBuff :: ActionFun
-afPlaceBuff (ts, m, h, s, am) exit =
+afPlaceBuff (ts, m, h, s, am) _ =
     let fr = afFrom am
         to = afTo am
         pBuff = fromMaybe undefined $ afBuff $ afParam am in
@@ -727,12 +707,16 @@ afPlaceBuff (ts, m, h, s, am) exit =
         returnY (ts, m, h, s, am)
 
 afShieldedText :: ActionFun
-afShieldedText (ts, m, h, s, am) exit =
+afShieldedText (ts, m, h, s, am) _ =
     returnY (ts, m, h ++ [printf "%s was shielded." (name (m !! afTo am))], s, am)
 
 afPSIShieldAText :: ActionFun
-afPSIShieldAText (ts, m, h, s, am) exit =
+afPSIShieldAText (ts, m, h, s, am) _ =
     returnY (ts, m, h ++ [printf "%s tried PSIShield a!" (name (m !! afFrom am))], s, am)
+
+afReadyText :: ActionFun
+afReadyText (ts, m, h, s, am) _ =
+    returnY (ts, m, h ++ [printf "%s is ready for an attack." (name (m !! afFrom am))], s, am)
 
 -- attack DAG constants
 map01 = fromList [
@@ -894,8 +878,21 @@ afp38 = ActionParam
     , afPP = Just 0x10
     , afBuff = Just 0x10 }
 
-performAttack2 :: [Member] -> Int -> Word16 -> ActionRet
-performAttack2 m from s =
+map53 = fromList [
+    (0, afReadyText),
+    (1, afPlaceBuff),
+    (2, afExit)]
+dec53 = fromList [
+    (0, Next 1),
+    (1, Next 2),
+    (2, Nil)]
+afp53 = ActionParam
+    { afPSIDamage = Nothing
+    , afPP = Nothing
+    , afBuff = Just 0x08 }
+
+performAttack :: [Member] -> Int -> Word16 -> ActionRet
+performAttack m from s =
     let to = attackTarg (m !! from) in
     runCont (callCC $ \exit -> callCC $ \exit2 -> do
     (ts, m, h, s) <- performStatus m from s exit2
@@ -914,8 +911,10 @@ performAttack2 m from s =
      0x15 -> runGraph (map15, dec15, afp15)
      -- PSIShield a
      0x38 -> runGraph (map38, dec38, afp38)
+     -- ready for an attack
+     0x53 -> runGraph (map53, dec53, afp53)
      e -> error $ printf "performAttack: unsupported attack \"0x%02hhx\"." e)) id
-    where runGraph g = return (runAction (Continue, m, [], s) from g)
+    where runGraph g = return $ runAction (Continue, m, [], s) from g
 
 battleTurn :: [Member] -> Word16 -> ActionRet
 battleTurn members seed =
@@ -980,5 +979,5 @@ battleTurn members seed =
 main = do
     let (i, s1) = selectOpponent battleMembers 0 0xec64
         m = insertAt battleMembers 0 (head battleMembers) { attackTarg = i }
-        (_, _, history, _) = performAttack2 m 0 s1
+        (_, _, history, _) = performAttack m 0 s1
     putStrLn $ intercalate "\n" history
