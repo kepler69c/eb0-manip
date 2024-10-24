@@ -1,13 +1,14 @@
+import Prelude hiding ((!?))
 import Data.Word
 import Data.Bits
-import Data.List
+import Data.List hiding ((!?))
 import Text.Printf
 import Data.Maybe
 import Control.Monad.Cont
 import Control.Monad.Identity
 import Control.Monad.Cont.Class
-import Control.Monad (when)
-import Data.Map (Map, (!), fromList)
+import Control.Monad (when, foldM)
+import Data.Map (Map, (!), (!?), fromList)
 
 -- types
 data Range = All | Self | One deriving Show
@@ -29,7 +30,7 @@ data Member = Member
     , attackTarg :: Int
     , status ::     Word8
     , statusMask :: Word8
-    , resistence :: Word8
+    , resistance :: Word8
     , buff ::       Word8
     , attackList :: [Word8]
     , bag ::        [Word8]
@@ -81,7 +82,7 @@ emptyMember = Member {
     attackTarg = 0,
     status =     0x00,
     statusMask = 0x00,
-    resistence = 0x00,
+    resistance = 0x00,
     buff =       0x00,
     attackList = [],
     bag =        []
@@ -93,157 +94,6 @@ encounterTable :: [Word8]
 encounterTable = 
     [ 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99,
       0x9a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 ]
-
--- TODO: maybe read from file ?
-battleMembers = [
-        Member {
-            name =       "A",
-            hp =         0x0020,
-            pp =         0x000b,
-            attack =     0x0012,
-            defense =    0x0009,
-            fight =      0x0b,
-            speed =      0x09,
-            wisdom =     0x09,
-            strength =   0x0a,
-            force =      0x0b,
-            attackSel =  0x01,
-            attackTarg = 0,
-            status =     0x00,
-            statusMask = 0xff,
-            resistence = 0x00,
-            buff =       0x00,
-            attackList = [],
-            bag =        [ 0x6e, 0x58, 0x68, 0x28,
-                           0x61, 0x03, 0x47, 0x00 ]
-        },
-        Member {
-            name =       "B",
-            hp =         0x0000,
-            pp =         0x0000,
-            attack =     0x0004,
-            defense =    0x0002,
-            fight =      0x04,
-            speed =      0x02,
-            wisdom =     0x08,
-            strength =   0x04,
-            force =      0x03,
-            attackSel =  0x01,
-            attackTarg = 0,
-            status =     0x00,
-            statusMask = 0xff,
-            resistence = 0x00,
-            buff =       0x00,
-            attackList = [],
-            bag =        [ 0x00, 0x00, 0x00, 0x00,
-                           0x00, 0x00, 0x00, 0x00 ]
-        },
-        Member {
-            name =       "EVE",
-            hp =         0x03e7,
-            pp =         0x0000,
-            attack =     0x03e7,
-            defense =    0x03e7,
-            fight =      0xff,
-            speed =      0xff,
-            wisdom =     0xff,
-            strength =   0xff,
-            force =      0xff,
-            attackSel =  0x01,
-            attackTarg = 0,
-            status =     0x00,
-            statusMask = 0xff,
-            resistence = 0x00,
-            buff =       0x00,
-            attackList = [],
-            bag =        []
-        },
-        emptyMember,
-        Member {
-            name =       "LastStarmanA",
-            hp =         0x0078,
-            pp =         0x0064,
-            attack =     0x005a,
-            defense =    0x008c,
-            fight =      0x46,
-            speed =      0x3c,
-            wisdom =     0x3c,
-            strength =   0x50,
-            force =      0x32,
-            attackSel =  0x01,
-            attackTarg = 0,
-            status =     0x00,
-            statusMask = 0x9b,
-            resistence = 0x00,
-            buff =       0x00,
-            attackList = [ 0x13, 0x13, 0x38, 0x15,
-                           0x01, 0x01, 0x53, 0x53 ],
-            bag =        []
-        },
-        Member {
-            name =       "LastStarmanB",
-            hp =         0x0078,
-            pp =         0x0064,
-            attack =     0x005a,
-            defense =    0x008c,
-            fight =      0x46,
-            speed =      0x3c,
-            wisdom =     0x3c,
-            strength =   0x50,
-            force =      0x32,
-            attackSel =  0x01,
-            attackTarg = 0,
-            status =     0x00,
-            statusMask = 0x9b,
-            resistence = 0x00,
-            buff =       0x00,
-            attackList = [ 0x13, 0x13, 0x38, 0x15,
-                           0x01, 0x01, 0x53, 0x53 ],
-            bag =        []
-        },
-        Member {
-            name =       "LastStarmanC",
-            hp =         0x0078,
-            pp =         0x0064,
-            attack =     0x005a,
-            defense =    0x008c,
-            fight =      0x46,
-            speed =      0x3c,
-            wisdom =     0x3c,
-            strength =   0x50,
-            force =      0x32,
-            attackSel =  0x01,
-            attackTarg = 0,
-            status =     0x00,
-            statusMask = 0x9b,
-            resistence = 0x00,
-            buff =       0x00,
-            attackList = [ 0x13, 0x13, 0x38, 0x15,
-                           0x01, 0x01, 0x53, 0x53 ],
-            bag =        []
-        },
-        Member {
-            name =       "LastStarmanD",
-            hp =         0x0078,
-            pp =         0x0064,
-            attack =     0x005a,
-            defense =    0x008c,
-            fight =      0x46,
-            speed =      0x3c,
-            wisdom =     0x3c,
-            strength =   0x50,
-            force =      0x32,
-            attackSel =  0x01,
-            attackTarg = 0,
-            status =     0x00,
-            statusMask = 0x9b,
-            resistence = 0x00,
-            buff =       0x00,
-            attackList = [ 0x13, 0x13, 0x38, 0x15,
-                           0x01, 0x01, 0x53, 0x53 ],
-            bag =        []
-        }
-    ]
 
 -- global utilities
 to8 :: (Integral a) => a -> Word8
@@ -280,14 +130,60 @@ showHex16 = printf "0x%04x"
 showHex8 :: Word8 -> String
 showHex8 = printf "0x%02xto16 "
 
-prettyWindow :: [(Word16, Bool)] -> String
-prettyWindow w = "[" ++ intercalate ", " (map (\(s, h) ->
-            showHex16 s ++ if h then "!" else "") w) ++ "]"
+readHex :: String -> Maybe Int
+readHex ('0' : 'x' : n) =
+    foldM (\acc c ->
+        (+) <$> elemIndex c hexDict <*> pure (acc * 16)) 0 n
+    where hexDict = "0123456789abcdef"
+readHex _ = Nothing
 
-prettyPresses :: [(Int, [(Word16, Bool)])] -> String
-prettyPresses info =
-    unlines $ map (\(s, w) ->
-        "steps: " ++ show s ++ ", window: " ++ prettyWindow w) info
+-- read from file functions
+readMember :: [String] -> Member
+readMember entries =
+    let assq = fromList $ map (fromJust . list2tuple . split ':') entries
+        name = assq ! "name"
+        hp' = to16 <$> (readHex =<< assq !? "hp")
+        pp' = to16 <$> (readHex =<< assq !? "pp")
+        atk = to16 <$> (readHex =<< assq !? "attack")
+        def = to16 <$> (readHex =<< assq !? "defense")
+        fig = to8 <$> (readHex =<< assq !? "fight")
+        spe = to8 <$> (readHex =<< assq !? "speed")
+        wis = to8 <$> (readHex =<< assq !? "wisdom")
+        str = to8 <$> (readHex =<< assq !? "strength")
+        for = to8 <$> (readHex =<< assq !? "force")
+        sta = to8 <$> (readHex =<< assq !? "status")
+        stm = to8 <$> (readHex =<< assq !? "statusMask")
+        res = to8 <$> (readHex =<< assq !? "resistance")
+        bg' = map to8 <$> (mapM readHex . split ',' =<< assq !? "bag") in
+    emptyMember { name = name
+                , hp = memberF hp hp'
+                , pp = memberF pp pp'
+                , attack = memberF attack atk
+                , defense = memberF defense def
+                , fight = memberF fight fig
+                , speed = memberF speed spe
+                , wisdom = memberF wisdom wis
+                , strength = memberF strength str
+                , force = memberF force for
+                , status = memberF status sta
+                , statusMask = memberF statusMask stm
+                , resistance = memberF resistance res
+                , bag = memberF bag bg' }
+    where list2tuple [x, y] = Just (x, y) 
+          list2tuple _ = Nothing
+          memberF _ (Just e) = e
+          memberF f _ = f emptyMember
+
+readBattleMembers :: FilePath -> FilePath -> IO [Member]
+readBattleMembers teamFile enemyFile = do
+    teamStr <- readFile teamFile
+    enemyStr <- readFile enemyFile
+    let teamStrList = split "" (lines teamStr)
+        enemyStrList = split "" (lines enemyStr)
+        teamList = map readMember teamStrList
+        enemyList = map readMember enemyStrList
+    return $ memberPack teamList ++ memberPack enemyList
+    where memberPack memberList = take 4 (memberList ++ repeat emptyMember)
 
 -- RNG functions
 nextRng :: Word16 -> Word16
@@ -681,10 +577,10 @@ afBeamFranklin (ts, m, h, s, am) _ =
                  s, am { afFrom = to, afTo = fr })
     else returnN (ts, m, h, s, am)
 
-afBeamResistence :: ActionFun
-afBeamResistence (ts, m, h, s, am) _ =
+afBeamResistance :: ActionFun
+afBeamResistance (ts, m, h, s, am) _ =
     let to = afTo am in
-    if resistence (m !! to) .&. 0x80 /= 0x00 then
+    if resistance (m !! to) .&. 0x80 /= 0x00 then
         returnY (ts, m, h ++ [printf "There was no effect on %s." $ name (m !! to)], s, am)
     else returnN (ts, m, h, s, am)
 
@@ -840,7 +736,7 @@ map15 = fromList [
     (2, afConfusion),
     (3, afNoTarget),
     (4, afBeamFranklin),
-    (5, afBeamResistence),
+    (5, afBeamResistance),
     (6, afInstantKill),
     (7, afExit)]
 dec15 = fromList [
@@ -977,7 +873,5 @@ battleTurn members seed =
 --         (x, encounterTable !! fromIntegral (to8 (x .>>. 12)))) rngs
 
 main = do
-    let (i, s1) = selectOpponent battleMembers 0 0xec64
-        m = insertAt battleMembers 0 (head battleMembers) { attackTarg = i }
-        (_, _, history, _) = performAttack m 0 s1
-    putStrLn $ intercalate "\n" history
+    members <- readBattleMembers "team.txt" "enc9a.txt"
+    print members
