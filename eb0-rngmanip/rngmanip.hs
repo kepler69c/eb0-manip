@@ -9,6 +9,7 @@ import Control.Monad.Identity
 import Control.Monad.Cont.Class
 import Control.Monad (when, foldM)
 import Data.Map (Map, (!), (!?), fromList)
+import Control.Exception (assert)
 
 -- types
 data Range = All | Self | One deriving Show
@@ -184,6 +185,12 @@ readBattleMembers teamFile enemyFile = do
         enemyList = map readMember enemyStrList
     return $ memberPack teamList ++ memberPack enemyList
     where memberPack memberList = take 4 (memberList ++ repeat emptyMember)
+
+readEncounterTable :: FilePath -> IO [Word8]
+readEncounterTable tableFile = do
+    tableStr <- readFile tableFile
+    let ret = map to8 (fromJust (mapM readHex (split ' ' tableStr)))
+    assert (length ret == 16) $ return ret
 
 -- RNG functions
 nextRng :: Word16 -> Word16
