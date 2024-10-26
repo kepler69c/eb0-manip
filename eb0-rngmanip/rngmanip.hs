@@ -68,33 +68,27 @@ attackRangeMap =
       0x00, 0x00, 0x00, 0x03, 0x3c, 0x00, 0x00, 0x04,
       0x3c, 0x00, 0x01, 0x02, 0x3c, 0x00, 0x02, 0x01 ]
 
-emptyMember = Member {
-    name =       "", 
-    hp =         0x0000, 
-    pp =         0x0000,
-    attack =     0x0000,
-    defense =    0x0000,
-    fight =      0x00,
-    speed =      0x00,
-    wisdom =     0x00,
-    strength =   0x00,
-    force =      0x00, 
-    attackSel =  0x00,
-    attackTarg = 0,
-    status =     0x00,
-    statusMask = 0x00,
-    resistance = 0x00,
-    buff =       0x00,
-    attackList = [],
-    bag =        []
-}
+emptyMember = Member
+    { name =       ""
+    , hp =         0x0000
+    , pp =         0x0000
+    , attack =     0x0000
+    , defense =    0x0000
+    , fight =      0x00
+    , speed =      0x00
+    , wisdom =     0x00
+    , strength =   0x00
+    , force =      0x00
+    , attackSel =  0x00
+    , attackTarg = 0
+    , status =     0x00
+    , statusMask = 0x00
+    , resistance = 0x00
+    , buff =       0x00
+    , attackList = []
+    , bag =        [] }
 
 -- note: 0x92 is bomber, 0x9a is 4 starmen
--- TODO: maybe read from file ?
-encounterTable :: [Word8]
-encounterTable = 
-    [ 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99,
-      0x9a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 ]
 
 -- global utilities
 to8 :: (Integral a) => a -> Word8
@@ -134,8 +128,7 @@ showHex8 = printf "0x%02xto16 "
 readHex :: String -> Maybe Int
 readHex ('0' : 'x' : n) =
     foldM (\acc c ->
-        (+) <$> elemIndex c hexDict <*> pure (acc * 16)) 0 n
-    where hexDict = "0123456789abcdef"
+        (+) <$> elemIndex c "0123456789abcdef" <*> pure (acc * 16)) 0 n
 readHex _ = Nothing
 
 -- read from file functions
@@ -152,9 +145,12 @@ readMember entries =
         wis = to8 <$> (readHex =<< assq !? "wisdom")
         str = to8 <$> (readHex =<< assq !? "strength")
         for = to8 <$> (readHex =<< assq !? "force")
+        ats = to8 <$> (readHex =<< assq !? "attackSel")
+        ato = read <$> (assq !? "attackTarg")
         sta = to8 <$> (readHex =<< assq !? "status")
         stm = to8 <$> (readHex =<< assq !? "statusMask")
         res = to8 <$> (readHex =<< assq !? "resistance")
+        atl = map to8 <$> (mapM readHex . split ',' =<< assq !? "attackList")
         bg' = map to8 <$> (mapM readHex . split ',' =<< assq !? "bag") in
     emptyMember { name = name
                 , hp = memberF hp hp'
@@ -166,9 +162,12 @@ readMember entries =
                 , wisdom = memberF wisdom wis
                 , strength = memberF strength str
                 , force = memberF force for
+                , attackSel = memberF attackSel ats
+                , attackTarg = memberF attackTarg ato
                 , status = memberF status sta
                 , statusMask = memberF statusMask stm
                 , resistance = memberF resistance res
+                , attackList = memberF attackList atl
                 , bag = memberF bag bg' }
     where list2tuple [x, y] = Just (x, y) 
           list2tuple _ = Nothing
@@ -345,7 +344,7 @@ performStatus :: (Monad m) => [Member] -> Int -> Word16 ->
                  m ActionRet
 performStatus m from s exit
     -- dead
-    | (status (m !! from) .&. 0x80) /= 0x00 = exit (Continue, m, [], s)
+    | not (alive (m !! from)) = exit (Continue, m, [], s)
     -- stone
     | (status (m !! from) .&. 0x40) /= 0x00 =
         exit (Continue, m, [printf "%s turned into a stone." $ name (m !! from)], s)
@@ -415,7 +414,7 @@ performCrit m from h s = do
 
 -- actions framework
 data ActionParam = ActionParam
-    { afPSIDamage :: Maybe Word16
+    { afFixedDamage :: Maybe Word16
     , afPP :: Maybe Word16
     , afBuff :: Maybe Word8 }
 
@@ -434,7 +433,7 @@ returnN x = return (False, x)
 
 type ActionMap = Map Int ActionFun
 
-data ActionDecNode = Nil | Next Int | NextYN (Int, Int)
+data ActionDecNode = Next Int | NextYN (Int, Int)
 type ActionDec = Map Int ActionDecNode
 
 type ActionGraph = (ActionMap, ActionDec, ActionParam)
@@ -450,13 +449,11 @@ runAction (ts, m, h, s) fr (amap, adec, afp) =
         (case (adec ! i, b) of
          (Next j, _) -> loop (cont, j)
          (NextYN (j, _), True) -> loop (cont, j)
-         (NextYN (_, j), False) -> loop (cont, j)
-         _ -> undefined)) id
+         (NextYN (_, j), False) -> loop (cont, j))) id
 
 afConfusion :: ActionFun
 afConfusion (ts, m, h, s, am) _ =
-    let fr = afFrom am
-        to = afTo am in
+    let fr = afFrom am in
     if (status (m !! fr) .&. 0x08) /= 0x00 then do
         let loop s =
                 let s' = nextRng s
@@ -468,18 +465,38 @@ afConfusion (ts, m, h, s, am) _ =
         returnY (ts, m, h, s, am)
     else returnY (ts, m, h, s, am)
 
+afWideConfusion :: ActionFun
+afWideConfusion (ts, m, h, s, am) _ =
+    let fr = afFrom am in
+    if (status (m !! fr) .&. 0x08) /= 0x00 then
+        let s' = nextRng s
+            conf = (s' .&. 0x8000) /= 0x00
+            am' = am { afTo = if (fr < 4) || (conf && fr >= 4)
+                              then 4 
+                              else 0 } in
+        returnY (ts, m, h, s', am')
+    else
+        let am' | fr < 4 = am { afTo = 4 }
+                | otherwise = am { afTo = 0 } in
+        returnY (ts, m, h, s, am')
+
 afAttacksText :: ActionFun
-afAttacksText (ts, m, h, s, am) exit =
+afAttacksText (ts, m, h, s, am) _ =
     returnY (ts, m, h ++ [printf "%s's attack!" $ name (m !! afFrom am)], s, am)
 
 afNoTarget :: ActionFun
-afNoTarget (ts, m, h, s, am) exit =
+afNoTarget (ts, m, h, s, am) _ =
     let fr = afFrom am
         to = afTo am in
-    if statusMask (m !! fr) == 0x00 || not (alive (m !! fr)) ||
-       statusMask (m !! to) == 0x00 || not (alive (m !! to))
-    then exit (Continue, m, h ++ [printf "%s was already gone." $ name (m !! to)], s)
-    else returnY (ts, m, h, s, am)
+    (if statusMask (m !! fr) == 0x00 || not (alive (m !! fr)) ||
+        statusMask (m !! to) == 0x00 || not (alive (m !! to))
+     then returnY
+     else returnN) (ts, m, h, s, am)
+
+afGone :: ActionFun
+afGone (ts, m, h, s, am) exit =
+    let to = afTo am in
+    exit (Continue, m, h ++ [printf "%s was already gone." $ name (m !! to)], s)
 
 afCrit :: ActionFun
 afCrit (ts, m, h, s, am) _ = do
@@ -558,9 +575,9 @@ afCheckPP (ts, m, h, s, am) _ =
         m <- return $ insertAt m fr (m !! fr) { pp = pp (m !! fr) - mpp }
         returnY (ts, m, h, s, am)
 
-afPSIDamageCompute :: ActionFun
-afPSIDamageCompute (ts, m, h, s, am) _ =
-    returnY (ts, m, h, s, am { afDamage = Just $ fromMaybe undefined $ afPSIDamage $ afParam am })
+afFixedDamageCompute :: ActionFun
+afFixedDamageCompute (ts, m, h, s, am) _ =
+    returnY (ts, m, h, s, am { afDamage = Just $ fromJust $ afFixedDamage $ afParam am })
 
 afPsiBeamAText :: ActionFun
 afPsiBeamAText (ts, m, h, s, am) _ =
@@ -621,6 +638,20 @@ afReadyText :: ActionFun
 afReadyText (ts, m, h, s, am) _ =
     returnY (ts, m, h ++ [printf "%s is ready for an attack." (name (m !! afFrom am))], s, am)
 
+afTrippedFell :: ActionFun
+afTrippedFell (ts, m, h, s, am) _ =
+    returnY (ts, m, h ++ [printf "%s tripped and fell." (name (m !! afFrom am))], s, am)
+
+afUsedBombText :: ActionFun
+afUsedBombText (ts, m, h, s, am) _ =
+    returnY (ts, m, h ++ [printf "%s USEd Bomb!" (name (m !! afFrom am))], s, am)
+
+afIncrTarg :: ActionFun
+afIncrTarg (ts, m, h, s, am) _ =
+    let am' = am { afTo = afTo am + 1 } in
+    (if afTo am' == 4 || afTo am' == 8 then returnN
+     else returnY) (ts, m, h, s, am')
+
 -- attack DAG constants
 map01 = fromList [
     (0, afConfusion),
@@ -630,18 +661,18 @@ map01 = fromList [
     (4, afDodge),
     (5, afDamageCompute),
     (6, afApplyDamage),
-    (7, afExit)]
+    (7, afExit),
+    (8, afGone)]
 dec01 = fromList [
     (0, Next 1),
     (1, Next 2),
-    (2, Next 3),
+    (2, NextYN (8, 3)),
     (3, NextYN (6, 4)),
     (4, NextYN (7, 5)),
     (5, Next 6),
-    (6, Next 7),
-    (7, Nil)]
+    (6, Next 7)]
 afp01 = ActionParam
-    { afPSIDamage = Nothing
+    { afFixedDamage = Nothing
     , afPP = Nothing
     , afBuff = Nothing }
 
@@ -656,21 +687,21 @@ map02 = fromList [
     (7, afDodge),
     (8, afDamageCompute),
     (9, afApplyDamage),
-    (10, afExit)]
+    (10, afExit),
+    (11, afGone)]
 dec02 = fromList [
     (0, Next 1),
     (1, Next 2),
-    (2, Next 3),
+    (2, NextYN (11, 3)),
     (3, NextYN (6, 4)),
     (4, Next 5),
     (5, Next 6),
     (6, Next 7),
     (7, NextYN (10, 8)),
     (8, Next 9),
-    (9, Next 10),
-    (10, Nil)]
+    (9, Next 10)]
 afp02 = ActionParam
-    { afPSIDamage = Nothing
+    { afFixedDamage = Nothing
     , afPP = Nothing
     , afBuff = Nothing }
 
@@ -681,59 +712,79 @@ map03 = fromList [
     (3, afNoTarget),
     (4, afDodge),
     (5, afApplyDamage),
-    (6, afExit)]
+    (6, afExit),
+    (7, afGone)]
 dec03 = fromList [
     (0, Next 1),
     (1, Next 2),
     (2, Next 3),
-    (3, Next 4),
+    (3, NextYN (7, 4)),
     (4, NextYN (6, 5)),
-    (5, Next 6),
-    (6, Nil)]
+    (5, Next 6)]
 afp03 = ActionParam
-    { afPSIDamage = Nothing
+    { afFixedDamage = Nothing
+    , afPP = Nothing
+    , afBuff = Nothing }
+
+map10 = fromList [
+    (0, afUsedBombText),
+    (1, afFixedDamageCompute),
+    (2, afWideConfusion),
+    (3, afNoTarget),
+    (4, afApplyDamage),
+    (5, afIncrTarg),
+    (6, afExit)]
+dec10 = fromList [
+    (0, Next 1),
+    (1, Next 2),
+    (2, Next 3),
+    (3, NextYN (5, 4)),
+    (4, Next 5),
+    (5, NextYN (3, 6))]
+afp10 = ActionParam
+    { afFixedDamage = Just 0x003c
     , afPP = Nothing
     , afBuff = Nothing }
 
 map12 = fromList [
     (0, afPsiBeamAText),
     (1, afCheckPP),
-    (2, afPSIDamageCompute),
+    (2, afFixedDamageCompute),
     (3, afConfusion),
     (4, afNoTarget),
     (5, afApplyDamage),
-    (6, afExit)]
+    (6, afExit),
+    (7, afGone)]
 dec12 = fromList [
     (0, Next 1),
     (1, NextYN (2, 6)),
     (2, Next 3),
     (3, Next 4),
-    (4, Next 5),
-    (5, Next 6),
-    (6, Nil)]
+    (4, NextYN (7, 5)),
+    (5, Next 6)]
 afp12 = ActionParam
-    { afPSIDamage = Just 0x1e
+    { afFixedDamage = Just 0x001e
     , afPP = Just 0x04
     , afBuff = Nothing }
 
 map13 = fromList [
     (0, afPsiBeamBText),
     (1, afCheckPP),
-    (2, afPSIDamageCompute),
+    (2, afFixedDamageCompute),
     (3, afConfusion),
     (4, afNoTarget),
     (5, afApplyDamage),
-    (6, afExit)]
+    (6, afExit),
+    (7, afGone)]
 dec13 = fromList [
     (0, Next 1),
     (1, NextYN (2, 6)),
     (2, Next 3),
     (3, Next 4),
-    (4, Next 5),
-    (5, Next 6),
-    (6, Nil)]
+    (4, NextYN (7, 5)),
+    (5, Next 6)]
 afp13 = ActionParam
-    { afPSIDamage = Just 0x50
+    { afFixedDamage = Just 0x0050
     , afPP = Just 0x07
     , afBuff = Nothing }
 
@@ -745,18 +796,18 @@ map15 = fromList [
     (4, afBeamFranklin),
     (5, afBeamResistance),
     (6, afInstantKill),
-    (7, afExit)]
+    (7, afExit),
+    (8, afGone)]
 dec15 = fromList [
     (0, Next 1),
     (1, NextYN (2, 7)),
     (2, Next 3),
-    (3, Next 4),
+    (3, NextYN (8, 4)),
     (4, Next 5),
     (5, NextYN (7, 6)),
-    (6, Next 7),
-    (7, Nil)]
+    (6, Next 7)]
 afp15 = ActionParam 
-    { afPSIDamage = Nothing
+    { afFixedDamage = Nothing
     , afPP = Just 0x10
     , afBuff = Nothing }
 
@@ -767,19 +818,28 @@ map38 = fromList [
     (3, afNoTarget),
     (4, afPlaceBuff),
     (5, afShieldedText),
-    (6, afExit)]
+    (6, afExit),
+    (7, afGone)]
 dec38 = fromList [
     (0, Next 1),
     (1, NextYN (2, 6)),
     (2, Next 3),
-    (3, Next 4),
+    (3, NextYN (7, 4)),
     (4, NextYN (5, 6)),
-    (5, Next 6),
-    (6, Nil)]
+    (5, Next 6)]
 afp38 = ActionParam 
-    { afPSIDamage = Nothing
+    { afFixedDamage = Nothing
     , afPP = Just 0x10
     , afBuff = Just 0x10 }
+
+map46 = fromList [
+    (0, afTrippedFell),
+    (1, afExit)]
+dec46 = fromList [(0, Next 1)]
+afp46 = ActionParam
+    { afFixedDamage = Nothing
+    , afPP = Nothing
+    , afBuff = Nothing }
 
 map53 = fromList [
     (0, afReadyText),
@@ -787,37 +847,40 @@ map53 = fromList [
     (2, afExit)]
 dec53 = fromList [
     (0, Next 1),
-    (1, Next 2),
-    (2, Nil)]
+    (1, Next 2)]
 afp53 = ActionParam
-    { afPSIDamage = Nothing
+    { afFixedDamage = Nothing
     , afPP = Nothing
     , afBuff = Just 0x08 }
 
 performAttack :: [Member] -> Int -> Word16 -> ActionRet
 performAttack m from s =
-    let to = attackTarg (m !! from) in
     runCont (callCC $ \exit -> callCC $ \exit2 -> do
     (ts, m, h, s) <- performStatus m from s exit2
-    (case attackSel (m !! from) of
-     -- normal attack
-     0x01 -> runGraph (map01, dec01, afp01)
-     -- continuous attack
-     0x02 -> runGraph (map02, dec02, afp02)
-     -- bite attack
-     0x03 -> runGraph (map03, dec03, afp03)
-     -- PK Beam a
-     0x12 -> runGraph (map12, dec12, afp12)
-     -- PK Beam b
-     0x13 -> runGraph (map13, dec13, afp13)
-     -- PK Beam r
-     0x15 -> runGraph (map15, dec15, afp15)
-     -- PSIShield a
-     0x38 -> runGraph (map38, dec38, afp38)
-     -- ready for an attack
-     0x53 -> runGraph (map53, dec53, afp53)
-     e -> error $ printf "performAttack: unsupported attack \"0x%02hhx\"." e)) id
-    where runGraph g = return $ runAction (Continue, m, [], s) from g
+    (if ts /= Continue then exit (ts, m, h, s) else
+     (case attackSel (m !! from) of
+      -- normal attack
+      0x01 -> runGraph (map01, dec01, afp01)
+      -- continuous attack
+      0x02 -> runGraph (map02, dec02, afp02)
+      -- bite attack
+      0x03 -> runGraph (map03, dec03, afp03)
+      -- USEd Bomb
+      0x10 -> runGraph (map10, dec10, afp10)
+      -- PK Beam a
+      0x12 -> runGraph (map12, dec12, afp12)
+      -- PK Beam b
+      0x13 -> runGraph (map13, dec13, afp13)
+      -- PK Beam r
+      0x15 -> runGraph (map15, dec15, afp15)
+      -- PSIShield a
+      0x38 -> runGraph (map38, dec38, afp38)
+      -- tripped and fell
+      0x46 -> runGraph (map46, dec46, afp46)
+      -- ready for an attack
+      0x53 -> runGraph (map53, dec53, afp53)
+      e -> error $ printf "performAttack: unsupported attack \"0x%02hhx\"." e) m h s)) id
+    where runGraph g m h s = return $ runAction (Continue, m, h, s) from g
 
 battleTurn :: [Member] -> Word16 -> ActionRet
 battleTurn members seed =
@@ -880,5 +943,12 @@ battleTurn members seed =
 --         (x, encounterTable !! fromIntegral (to8 (x .>>. 12)))) rngs
 
 main = do
-    members <- readBattleMembers "team.txt" "enc9a.txt"
+    members <- readBattleMembers "team_2.txt" "enc92_2.txt"
+    (_, members', h, s) <- return $ performAttack members 4 0x988f
+    putStrLn "members:"
     print members
+    putStrLn "members':"
+    print members'
+    putStrLn "h:"
+    mapM_ putStrLn h
+    putStrLn $ "s: " ++ showHex16 s
