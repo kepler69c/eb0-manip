@@ -132,10 +132,11 @@ readHex ('0' : 'x' : n) =
 readHex _ = Nothing
 
 -- read from file functions
+-- TODO: improve? maybe with a list of optional or not fields
 readMember :: [String] -> Member
 readMember entries =
     let assq = fromList $ map (fromJust . list2tuple . split ':') entries
-        name = assq ! "name"
+        name = assq !? "name"
         hp' = to16 <$> (readHex =<< assq !? "hp")
         pp' = to16 <$> (readHex =<< assq !? "pp")
         atk = to16 <$> (readHex =<< assq !? "attack")
@@ -152,27 +153,29 @@ readMember entries =
         res = to8 <$> (readHex =<< assq !? "resistance")
         atl = map to8 <$> (mapM readHex . split ',' =<< assq !? "attackList")
         bg' = map to8 <$> (mapM readHex . split ',' =<< assq !? "bag") in
-    emptyMember { name = name
-                , hp = memberF hp hp'
-                , pp = memberF pp pp'
-                , attack = memberF attack atk
-                , defense = memberF defense def
-                , fight = memberF fight fig
-                , speed = memberF speed spe
-                , wisdom = memberF wisdom wis
-                , strength = memberF strength str
-                , force = memberF force for
-                , attackSel = memberF attackSel ats
-                , attackTarg = memberF attackTarg ato
-                , status = memberF status sta
-                , statusMask = memberF statusMask stm
-                , resistance = memberF resistance res
-                , attackList = memberF attackList atl
-                , bag = memberF bag bg' }
+    emptyMember { name = memberF "name" name
+                , hp = memberF "hp" hp'
+                , pp = memberF "pp" pp'
+                , attack = memberF "attack" atk
+                , defense = memberF "defense" def
+                , fight = memberF "fight" fig
+                , speed = memberF "speed" spe
+                , wisdom = memberF "wisdom" wis
+                , strength = memberF "strength" str
+                , force = memberF "force" for
+                , attackSel = memberFOpt attackSel ats
+                , attackTarg = memberFOpt attackTarg ato
+                , status = memberF "status" sta
+                , statusMask = memberF "statusMask" stm
+                , resistance = memberF "resistance" res
+                , attackList = memberFOpt attackList atl
+                , bag = memberFOpt bag bg' }
     where list2tuple [x, y] = Just (x, y) 
           list2tuple _ = Nothing
           memberF _ (Just e) = e
-          memberF f _ = f emptyMember
+          memberF f _ = error ("field " ++ f ++ " is missing!")
+          memberFOpt _ (Just e) = e
+          memberFOpt f _ = f emptyMember
 
 readBattleMembers :: FilePath -> FilePath -> IO [Member]
 readBattleMembers teamFile enemyFile = do
@@ -943,12 +946,5 @@ battleTurn members seed =
 --         (x, encounterTable !! fromIntegral (to8 (x .>>. 12)))) rngs
 
 main = do
-    members <- readBattleMembers "team_2.txt" "enc92_2.txt"
-    (_, members', h, s) <- return $ performAttack members 4 0x988f
-    putStrLn "members:"
+    members <- readBattleMembers "team.txt" "enc92.txt"
     print members
-    putStrLn "members':"
-    print members'
-    putStrLn "h:"
-    mapM_ putStrLn h
-    putStrLn $ "s: " ++ showHex16 s
