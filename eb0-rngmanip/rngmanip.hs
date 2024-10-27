@@ -6,18 +6,19 @@ import Text.Printf
 import Data.Maybe
 import Control.Monad.Cont
 import Control.Monad.Identity
-import Control.Monad.Cont.Class
 import Control.Monad (when, foldM)
 import Data.Map (Map, (!), (!?), fromList)
 import Control.Exception (assert)
+import Debug.Trace (trace)
 
 -- types
-data Range = All | Self | One deriving Show
+data Range = All | Ally | Enemy deriving Show
 
 data TurnState = Win | Continue | Loss deriving (Show, Eq)
 
 data Member = Member
     { name ::       String
+    , charID ::     Word8
     , hp ::         Word16
     , pp ::         Word16
     , attack ::     Word16
@@ -70,6 +71,7 @@ attackRangeMap =
 
 emptyMember = Member
     { name =       ""
+    , charID =     0x00
     , hp =         0x0000
     , pp =         0x0000
     , attack =     0x0000
@@ -97,6 +99,9 @@ to8 = fromIntegral
 to16 :: (Integral a) => a -> Word16
 to16 = fromIntegral
 
+to32 :: (Integral a) => a -> Word32
+to32 = fromIntegral
+
 split :: (Eq a) => a -> [a] -> [[a]]
 split _ [] = []
 split a l =
@@ -123,7 +128,7 @@ showHex16 :: Word16 -> String
 showHex16 = printf "0x%04x"
 
 showHex8 :: Word8 -> String
-showHex8 = printf "0x%02xto16 "
+showHex8 = printf "0x%02x"
 
 readHex :: String -> Maybe Int
 readHex ('0' : 'x' : n) =
@@ -131,12 +136,36 @@ readHex ('0' : 'x' : n) =
         (+) <$> elemIndex c "0123456789abcdef" <*> pure (acc * 16)) 0 n
 readHex _ = Nothing
 
+showMember :: Member -> String
+showMember member =
+    "Member {\n" ++
+        "  name: " ++ name member ++ "\n" ++
+        "  id:   " ++ showHex8 (charID member) ++ "\n" ++
+        "  hp:   " ++ showHex16 (hp member) ++ "\n" ++
+        "  pp:   " ++ showHex16 (pp member) ++ "\n" ++
+        "  atk:  " ++ showHex16 (attack member) ++ "\n" ++
+        "  def:  " ++ showHex16 (defense member) ++ "\n" ++
+        "  fig:  " ++ showHex8 (fight member) ++ "\n" ++
+        "  spe:  " ++ showHex8 (speed member) ++ "\n" ++
+        "  wis:  " ++ showHex8 (wisdom member) ++ "\n" ++
+        "  str:  " ++ showHex8 (strength member) ++ "\n" ++
+        "  for:  " ++ showHex8 (force member) ++ "\n" ++
+        "  ats:  " ++ showHex8 (attackSel member) ++ "\n" ++
+        "  ato:  " ++ show (attackTarg member) ++ "\n" ++
+        "  sta:  " ++ showHex8 (status member) ++ "\n" ++
+        "  stm:  " ++ showHex8 (statusMask member) ++ "\n" ++
+        "  res:  " ++ showHex8 (resistance member) ++ "\n" ++
+        "  atl:  " ++ "[ " ++ intercalate ", " (map showHex8 (attackList member)) ++ " ]\n" ++
+        "  bag:  " ++ "[ " ++ intercalate ", " (map showHex8 (bag member)) ++ " ]\n" ++
+    "}"
+
 -- read from file functions
 -- TODO: improve? maybe with a list of optional or not fields
 readMember :: [String] -> Member
 readMember entries =
     let assq = fromList $ map (fromJust . list2tuple . split ':') entries
         name = assq !? "name"
+        id' = to8 <$> (readHex =<< assq !? "charID")
         hp' = to16 <$> (readHex =<< assq !? "hp")
         pp' = to16 <$> (readHex =<< assq !? "pp")
         atk = to16 <$> (readHex =<< assq !? "attack")
@@ -154,6 +183,7 @@ readMember entries =
         atl = map to8 <$> (mapM readHex . split ',' =<< assq !? "attackList")
         bg' = map to8 <$> (mapM readHex . split ',' =<< assq !? "bag") in
     emptyMember { name = memberF "name" name
+                , charID = memberFOpt charID id'
                 , hp = memberF "hp" hp'
                 , pp = memberF "pp" pp'
                 , attack = memberF "attack" atk
@@ -208,15 +238,15 @@ skipRng i x = iterate nextRng x !! i
 
 -- battle system
 alive :: Member -> Bool
-alive m = (status m .&. 0x80) == 0x00
+alive m = (status m .&. 0x80) == 0x00 && statusMask m /= 0x00
 
 valueRoll :: Word16 -> Word16 -> (Word16, Word16)
 valueRoll a seed =
     let seed' = nextRng seed
-        b = (a .&. 0xfcff) .<<. 6
-        c = (b `div` 100) * to16 (fightValMap !! fromIntegral (seed' .>>. 9))
+        b = to32 a .<<. 6
+        c = (b `div` 100) * to32 (fightValMap !! fromIntegral (seed' .>>. 9))
         -- depending on rng LSB, neg/pos value
-        d = (if (seed' .&. 0x100) /= 0x00 then b - c else b + c) .>>. 6 in
+        d = to16 $ (if (seed' .&. 0x100) /= 0x00 then b - c else b + c) .>>. 6 in
     (d, seed')
 
 battlePriority :: [Member] -> Word16 -> (Int, Word16)
@@ -242,6 +272,7 @@ attackSelect members from seed =
         let seed' = nextRng seed
             m = members !! from
             attack = attackList m !! (fromIntegral (seed' .>>. 8) .&. 0b111) in
+        -- trace ("[TRACE] attackSelect - from: " ++ show from ++ ", attack: " ++ showHex8 attack) $
         if attack == 0x53 || attack == 0x59
         then
             let m' = m { buff = buff m .|. 0x08 } in
@@ -250,15 +281,31 @@ attackSelect members from seed =
     -- always default attack during manips
     else (0x01, members, seed)
 
-selectOpponent :: [Member] -> Int -> Word16 -> (Int, Word16)
-selectOpponent members from seed =
-    if from < 4 then (4, seed)
-    else loop seed where
+selectTarget :: [Member] -> Int -> Range -> Word16 -> (Int, Word16)
+selectTarget members from range seed
+    | charID (members !! from) == 0x06 = noncharloop seed
+    | from < 4 = (4, seed)
+    | otherwise = loop seed
+    where
     loop seed =
-            let seed' = nextRng seed
-                sel = fromIntegral (seed' .>>. 5) in
-            if alive (members !! sel) && sel < 4 then (sel, seed')
-            else loop seed'
+        let seed' = nextRng seed
+            sel = fromIntegral (seed' .>>. 13) in
+        -- trace ("[TRACE] selectTarget.loop - from: " ++ show from ++ ", sel: " ++ show sel) $
+        -- trace ("[TRACE] selectTarget.loop - from: " ++ show from ++ ", seed: " ++ showHex16 seed') $
+        if alive (members !! sel) && rangeSelect range sel then (sel, seed')
+        else loop seed'
+    rangeSelect range sel =
+        case range of
+        Enemy -> sel < 4
+        Ally  -> sel >= 4
+        _     -> error "rangeSelect: can't select target for range \"All\""
+    noncharloop seed =
+        let seed' = nextRng seed
+            sel = fromIntegral (seed' .>>. 13) .|. 4 in
+        -- trace ("[TRACE] selectTarget.noncharloop - from: " ++ show from ++ ", sel: " ++ show sel) $
+        -- trace ("[TRACE] selectTarget.noncharloop - from: " ++ show from ++ ", seed: " ++ showHex16 seed') $
+        if alive (members !! sel) then (sel, seed')
+        else noncharloop seed'
 
 getAttackRange :: Word8 -> Range
 getAttackRange attackId =
@@ -268,8 +315,8 @@ getAttackRange attackId =
         r = loop a b in 
     case r of
     0 -> All
-    1 -> Self
-    _ -> One
+    1 -> Ally
+    _ -> Enemy
     where
     ror (a, c) = ((a .>>. 1) + (if c then 0x80 else 0x00), (a .&. 0x01) /= 0x00)
     loop a b = if (a .&. 0x01) /= 0x00 then b else loop (a .>>. 1) (b .>>. 1)
@@ -295,7 +342,7 @@ attackDamage members from to =
             | (attack mFrom * 3) < defense mTo = 0x00
             | otherwise = ((attack mFrom * 3) - defense mTo) `div` 4 in
     if dmg == 0x00 then 0x0001 else dmg
-                  
+
 critDamage :: [Member] -> Int -> Word16 -> (Word16, Word16)
 critDamage members from =
     valueRoll (attack (members !! from))
@@ -308,7 +355,6 @@ battleEnd (m : ml)
     | otherwise = Continue
     where members = m : ml
 
--- TODO: maybe change to CPS?
 applyDamage :: Word16 -> [Member] -> Int -> Int -> Word16 -> (TurnState, [Member], [String], Word16)
 applyDamage dmg members from to s =
     let mFrom = members !! from
@@ -381,39 +427,6 @@ performStatus m from s exit
     | (status (m !! from) .&. 0x08) /= 0x00 = 
         return (Continue, m, [printf "%s is so confused." $ name (m !! from)], s)
     | otherwise = return (Continue, m, [], s)
-
-performConfusion :: (Monad m) => [Member] -> Int -> Word16 -> m (Int, Word16)
-performConfusion m from s =
-    let to = attackTarg (m !! from) in
-    if (status (m !! from) .&. 0x08) /= 0x00 then do
-        let loop s =
-                let s' = nextRng s
-                    sel = fromIntegral (s' .>>. 5) in
-                if alive (m !! sel) then (sel, s)
-                else loop s
-        (sel, s) <- return $ loop s
-        return (sel, s)
-    else return (to, s)
-
-performNoTarget :: (Monad m) => [Member] -> Int -> [String] -> Word16 ->
-                   (ActionRet -> m ()) ->
-                   m ()
-performNoTarget m from h s exit =
-    let to = attackTarg (m !! from) in
-    when (statusMask (m !! from) == 0x00 || statusMask (m !! to) == 0x00 ||
-          not (alive (m !! from)) || not (alive (m !! to)))
-        (exit (Continue, m, h ++ [printf "%s was already gone." $ name (m !! to)], s))
-
-performCrit :: (Monad m) => [Member] -> Int -> [String] -> Word16 ->
-               m (Word16, [String], Maybe Word16)
-performCrit m from h s = do
-    let to = attackTarg (m !! from)
-    (crit, s) <- return $ cdRate m from to s
-    if crit then do
-        h <- return $ h ++ ["SMAAAASH!!"]
-        (dmg, s) <- return $ critDamage m from s
-        return (s, h, Just dmg)
-    else return (s, h, Nothing)
 
 -- actions framework
 data ActionParam = ActionParam
@@ -491,8 +504,7 @@ afNoTarget :: ActionFun
 afNoTarget (ts, m, h, s, am) _ =
     let fr = afFrom am
         to = afTo am in
-    (if statusMask (m !! fr) == 0x00 || not (alive (m !! fr)) ||
-        statusMask (m !! to) == 0x00 || not (alive (m !! to))
+    (if not (alive (m !! fr)) || not (alive (m !! to))
      then returnY
      else returnN) (ts, m, h, s, am)
 
@@ -538,7 +550,7 @@ afApplyDamage :: ActionFun
 afApplyDamage (ts, m, h, s, am) exit = do
     let fr = afFrom am
         to = afTo am
-        dmg = fromMaybe undefined (afDamage am)
+        dmg = fromJust (afDamage am)
     (fr, to, am, h) <- if (buff (m !! to) .&. 0x04) /= 0x00 then do
         -- swap users
         am <- return $ am { afFrom = to, afTo = fr }
@@ -569,7 +581,7 @@ afBitText (ts, m, h, s, am) _ =
 afCheckPP :: ActionFun
 afCheckPP (ts, m, h, s, am) _ =
     let fr = afFrom am
-        mpp = fromMaybe undefined (afPP $ afParam am) in
+        mpp = fromJust (afPP $ afParam am) in
     if buff (m !! fr) .&. 0x40 /= 0 then
         returnN (ts, m, h ++ ["But, the PSI was blocked."], s, am)
     else if pp (m !! fr) < mpp then
@@ -612,17 +624,23 @@ afBeamResistance (ts, m, h, s, am) _ =
     else returnN (ts, m, h, s, am)
 
 afInstantKill :: ActionFun
-afInstantKill (ts, m, h, s, am) _ = do
+afInstantKill (ts, m, h, s, am) exit =
     let fr = afFrom am
-        to = afTo am
-    m <- return $ insertAt m to (m !! to) { status = 0x80, hp = 0x0000 }
-    returnY (ts, m, h ++ [printf "%s was beaten!" $ name (m !! to)], s, am)
+        to = afTo am in
+    if charID (m !! to) == 0x06 then do
+        s <- return $ nextRng s
+        let dmg = (s .>>. 8) .&. 0x03
+        am <- return $ am { afDamage = Just dmg }
+        afApplyDamage (ts, m, h, s, am) exit
+    else do
+        m <- return $ insertAt m to (m !! to) { status = 0x80, hp = 0x0000 }
+        returnY (ts, m, h ++ [printf "%s was beaten!" $ name (m !! to)], s, am)
 
 afPlaceBuff :: ActionFun
 afPlaceBuff (ts, m, h, s, am) _ =
     let fr = afFrom am
         to = afTo am
-        pBuff = fromMaybe undefined $ afBuff $ afParam am in
+        pBuff = fromJust $ afBuff $ afParam am in
     if buff (m !! to) .&. pBuff /= 0x00 then
         returnN (ts, m, h ++ [printf "There was no effect on %s." $ name (m !! to)], s, am)
     else do
@@ -891,17 +909,22 @@ battleTurn members seed =
             let m1 = m  { attackSel = 0x00, buff = buff m .&. 0xf7 } in
             if statusMask m1 == 0x00 || status m1 .&. 0xf4 /= 0x00 || buff m1 .&. 0x20 /= 0x00
             then (insertAt members i m1, seed) else
-            let (id, members', seed1) = attackSelect (insertAt members i m1) i seed
+            let (id, members', seed') = attackSelect (insertAt members i m1) i seed
                 m2 = (members' !! i) { attackSel = id }
-                members'' = insertAt members' i m2 in
-            case getAttackRange id of
-            One ->
-                let (j, seed2) = selectOpponent members'' i seed1
-                    m3 = m2 { attackTarg = j } in
-                (insertAt members'' i m3, seed2)
-            _ ->
+                members'' = insertAt members' i m2
+                range = getAttackRange id in
+            -- trace ("[TRACE] battleTurn - selected attack: " ++ showHex8 id ++ ", range: " ++ show range ++ ", from: " ++ show i) $
+            case range of
+            All ->
                 let m3 = m2 { attackTarg = i } in
-                (insertAt members'' i m3, seed1)) (members, seed) (zip members [0..]) in
+                (insertAt members'' i m3, seed')
+            _ ->
+                let (j, seed'') = selectTarget members'' i range seed'
+                    m3 = m2 { attackTarg = j } in
+                -- trace ("[TRACE] battleTurn - selected target: " ++ show j)
+                (insertAt members'' i m3, seed'')) (members, seed) (zip members [0..]) in
+    -- trace ("[TRACE] battleTurn - members after move selection: \n" ++ intercalate "\n" (map showMember members')) $
+    -- trace ("[TRACE] battleTurn - seed after move selection: " ++ showHex16 seed') $
     runUntilStop $ 
     scanl (\(ts, members, history, seed) _ ->
         let (caster, seed1) = battlePriority members seed
@@ -946,5 +969,9 @@ battleTurn members seed =
 --         (x, encounterTable !! fromIntegral (to8 (x .>>. 12)))) rngs
 
 main = do
-    members <- readBattleMembers "team.txt" "enc92.txt"
-    print members
+    members <- readBattleMembers "team.txt" "enc9a.txt"
+    (_, members', h, s) <- return $ battleTurn members 0xfa36
+    putStrLn "h:"
+    mapM_ putStrLn h
+    putStrLn "members':"
+    mapM_ (putStrLn . showMember) members'
