@@ -252,18 +252,24 @@ valueRoll a seed =
 battlePriority :: [Member] -> Word16 -> (Int, Word16)
 battlePriority members seed =
     loop (0, 0, 0, seed) members where 
-    loop (maxSpeed, maxTarget, i, seed') [] = (maxTarget, seed')
-    loop (maxSpeed, maxTarget, i, seed') (m : members) =
+    loop (maxSpeed, maxTarget, i, seed') [] =
+        -- trace ("[TRACE] battlePriority - maxSpeed: " ++ showHex16 maxSpeed ++ ", selected target: " ++
+        --       show maxTarget ++ ", seed: " ++ showHex16 seed')
+        (maxTarget, seed')
+    loop (maxSpeed, maxTarget, i, seed) (m : members) =
         case attackSel m of
         -- continue
-        0xff -> loop (maxSpeed, maxTarget, i + 1, seed') members
+        0xff -> loop (maxSpeed, maxTarget, i + 1, seed) members
         -- break
-        0x5e -> (maxTarget, seed')
+        0x5e -> (maxTarget, seed)
         -- find max
-        _ -> let (s, seed'') = valueRoll (0x00ff .&. to16 (speed m)) seed' in
-             loop (if s >= maxSpeed
-                   then (s, i, i + 1, seed'')
-                   else (maxSpeed, maxTarget, i + 1, seed'')) members
+        _ -> let (s, seed') = valueRoll (0x00ff .&. to16 (speed m)) seed
+                 s' = min s 0xff in
+             -- trace ("[TRACE] battlePriority - value rolled: " ++ showHex16 s' ++ " for member: " ++ show i ++ ", seed: " ++ showHex16 seed') $
+             -- trace ("[TRACE] battlePriority - maxSpeed: " ++ showHex16 maxSpeed ++ ", selected target: " ++ show maxTarget) $
+             loop (if s' >= maxSpeed
+                   then (s', i, i + 1, seed')
+                   else (maxSpeed, maxTarget, i + 1, seed')) members
 
 attackSelect :: [Member] -> Int -> Word16 -> (Word8, [Member], Word16)
 attackSelect members from seed =
@@ -278,8 +284,8 @@ attackSelect members from seed =
             let m' = m { buff = buff m .|. 0x08 } in
             (attack, insertAt members from m', seed')
         else (attack, members, seed')
-    -- always default attack during manips
-    else (0x01, members, seed)
+    -- always default attack during manips, selection takes 24 rng cycles
+    else (0x01, members, skipRng 24 seed)
 
 selectTarget :: [Member] -> Int -> Range -> Word16 -> (Int, Word16)
 selectTarget members from range seed
@@ -349,9 +355,9 @@ critDamage members from =
 
 battleEnd :: [Member] -> TurnState
 battleEnd (m : ml)
-    | hp m == 0x0000 = Loss
-    | all (== 0x0000) (take 4 $ map hp members) = Loss
-    | all (== 0x0000) (drop 4 $ map hp members) = Win
+    | not (alive m) = Loss
+    | (not . any alive) (take 4 members) = Loss
+    | (not . any alive) (drop 4 members) = Win
     | otherwise = Continue
     where members = m : ml
 
@@ -364,11 +370,11 @@ applyDamage dmg members from to s =
         dmg''' = if (buff mTo .&. 0x08) /= 0x00 then dmg'' `div` 2 else dmg''
         dmg'''' = if dmg''' == 0x0000 then 0x0001 else dmg'''
         (members', history, s'') = 
-            if hp mTo < dmg''''
+            if hp mTo <= dmg''''
             then (insertAt members to (mTo { hp = 0x0000, status = status mTo .|. 0x80 }),
                   [printf "%s was beaten!" (name mTo)], s')
             else 
-                let mTo' = mTo { hp = hp mTo - dmg'''' }
+                let mTo' = if charID mTo /= 0x06 then mTo { hp = hp mTo - dmg'''' } else mTo
                     (mTo'', history', s'') = if (status mTo' .&. 0x0c) /= 0x00 then
                         let s'' = nextRng s' in
                         if (s'' .&. 0xc0) == 0x00 then
@@ -384,6 +390,13 @@ applyDamage dmg members from to s =
                         else (mTo'', history', s''')
                     else (mTo'', history', s'') in
                 (insertAt members to mTo''', history'', s''') in
+    -- trace ("[TRACE] applyDamage - seed: " ++ showHex16 s)
+    -- trace ("[TRACE] applyDamage - dmg: " ++ show dmg)
+    -- trace ("[TRACE] applyDamage - dmg': " ++ show dmg')
+    -- trace ("[TRACE] applyDamage - dmg'': " ++ show dmg'')
+    -- trace ("[TRACE] applyDamage - dmg''': " ++ show dmg''')
+    -- trace ("[TRACE] applyDamage - dmg'''': " ++ show dmg'''')
+    -- trace ("[TRACE] applyDamage - inflicted damage: " ++ show dmg'''' ++ ", from: " ++ show from ++ ", to: " ++ show to ++ ", seed: " ++ showHex16 s'')
     (battleEnd members', members', printf "%s suffered damage of %d." (name mTo) dmg'''' : history, s'')
 
 type ActionRet = (TurnState, [Member], [String], Word16)
@@ -520,8 +533,8 @@ afCrit (ts, m, h, s, am) _ = do
     (crit, s) <- return $ cdRate m fr to s
     if crit then do
         let oldDmg = fromMaybe 0x0000 (afDamage am)
+            dmg = attack (m !! fr)
         h <- return $ h ++ ["SMAAAASH!!"]
-        (dmg, s) <- return $ critDamage m fr s
         am <- return $ am { afDamage = Just (oldDmg + dmg) }
         returnY (ts, m, h, s, am)
     else returnN (ts, m, h, s, am)
@@ -633,11 +646,21 @@ afInstantKill (ts, m, h, s, am) exit =
         am <- return $ am { afDamage = Just dmg }
         afApplyDamage (ts, m, h, s, am) exit
     else do
-        m <- return $ insertAt m to (m !! to) { status = 0x80, hp = 0x0000 }
-        returnY (ts, m, h ++ [printf "%s was beaten!" $ name (m !! to)], s, am)
+        m <- return $ insertAt m to (m !! to) { status = status (m !! to) .|. 0x80
+                                              , statusMask = 0x00
+                                              , hp = 0x0000 }
+        returnY (battleEnd m, m, h ++ [printf "%s was beaten!" $ name (m !! to)], s, am)
 
 afPlaceBuff :: ActionFun
 afPlaceBuff (ts, m, h, s, am) _ =
+    let fr = afFrom am
+        to = afTo am
+        pBuff = fromJust $ afBuff $ afParam am
+        m' = insertAt m to (m !! to) { buff = buff (m !! to) .|. pBuff } in
+    returnY (ts, m, h, s, am)
+
+afPlaceBuffYN :: ActionFun
+afPlaceBuffYN (ts, m, h, s, am) _ =
     let fr = afFrom am
         to = afTo am
         pBuff = fromJust $ afBuff $ afParam am in
@@ -837,7 +860,7 @@ map38 = fromList [
     (1, afCheckPP),
     (2, afConfusion),
     (3, afNoTarget),
-    (4, afPlaceBuff),
+    (4, afPlaceBuffYN),
     (5, afShieldedText),
     (6, afExit),
     (7, afGone)]
@@ -927,18 +950,30 @@ battleTurn members seed =
     -- trace ("[TRACE] battleTurn - seed after move selection: " ++ showHex16 seed') $
     runUntilStop $ 
     scanl (\(ts, members, history, seed) _ ->
-        let (caster, seed1) = battlePriority members seed
-            (ts, members', history', seed2) = performAttack members caster seed1
+        let (caster, seed') = battlePriority members seed
+            (ts, members', history', seed'') = performAttack members caster seed'
             members'' = case ts of 
                         Continue -> 
                             let m = members' !! caster in
                             insertAt members' caster (m { attackSel = 0xff })
                         _ -> members' in
-        (ts, members'', history ++ history', seed2)) (Continue, members', [], seed') members where
+            -- trace ("[TRACE] battleTurn - current caster: " ++ show caster ++ ", seed: " ++ showHex16 seed')
+        (ts, members'', history ++ history', seed'')) (Continue, members', [], seed') members where
     runUntilStop scan =
-        case find (\(st, _, _, _) -> st /= Continue) scan of
+        case find (\(ts, _, _, _) -> ts /= Continue) scan of
         Just x -> x
         Nothing -> last scan
+
+battle :: [Member] -> Word16 -> ActionRet
+battle members seed =
+    loop [] members seed
+    where
+    loop hist members seed =
+        let (ts, members', hist', seed') = battleTurn members seed
+            rhist = hist ++ hist' in
+        (case ts of
+         Continue -> loop rhist members' seed'
+         _ -> (ts, members', rhist, seed'))
 
 -- nbAlive :: [Member] -> Int
 -- nbAlive = length . filter alive
@@ -970,8 +1005,9 @@ battleTurn members seed =
 
 main = do
     members <- readBattleMembers "team.txt" "enc9a.txt"
-    (_, members', h, s) <- return $ battleTurn members 0xfa36
+    (_, members', h, s) <- return $ battle members 0xfe74
     putStrLn "h:"
     mapM_ putStrLn h
+    putStrLn $ "seed: " ++ showHex16 s
     putStrLn "members':"
     mapM_ (putStrLn . showMember) members'
