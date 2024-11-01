@@ -123,6 +123,10 @@ insertAt l i e =
     let (l1, _ : l2) = splitAt i l in
     l1 ++ e : l2
 
+debugFlag = False
+
+debug str a = if debugFlag then trace str a else a
+
 -- show functions
 showHex16 :: Word16 -> String
 showHex16 = printf "0x%04x"
@@ -253,8 +257,8 @@ battlePriority :: [Member] -> Word16 -> (Int, Word16)
 battlePriority members seed =
     loop (0, 0, 0, seed) members where 
     loop (maxSpeed, maxTarget, i, seed') [] =
-        -- trace ("[TRACE] battlePriority - maxSpeed: " ++ showHex16 maxSpeed ++ ", selected target: " ++
-        --       show maxTarget ++ ", seed: " ++ showHex16 seed')
+        debug ("[TRACE] battlePriority - maxSpeed: " ++ showHex16 maxSpeed ++ ", selected target: " ++
+              show maxTarget ++ ", seed: " ++ showHex16 seed')
         (maxTarget, seed')
     loop (maxSpeed, maxTarget, i, seed) (m : members) =
         case attackSel m of
@@ -265,8 +269,8 @@ battlePriority members seed =
         -- find max
         _ -> let (s, seed') = valueRoll (0x00ff .&. to16 (speed m)) seed
                  s' = min s 0xff in
-             -- trace ("[TRACE] battlePriority - value rolled: " ++ showHex16 s' ++ " for member: " ++ show i ++ ", seed: " ++ showHex16 seed') $
-             -- trace ("[TRACE] battlePriority - maxSpeed: " ++ showHex16 maxSpeed ++ ", selected target: " ++ show maxTarget) $
+             debug ("[TRACE] battlePriority - value rolled: " ++ showHex16 s' ++ " for member: " ++ show i ++ ", seed: " ++ showHex16 seed') $
+             debug ("[TRACE] battlePriority - maxSpeed: " ++ showHex16 maxSpeed ++ ", selected target: " ++ show maxTarget) $
              loop (if s' >= maxSpeed
                    then (s', i, i + 1, seed')
                    else (maxSpeed, maxTarget, i + 1, seed')) members
@@ -278,7 +282,7 @@ attackSelect members from seed =
         let seed' = nextRng seed
             m = members !! from
             attack = attackList m !! (fromIntegral (seed' .>>. 8) .&. 0b111) in
-        -- trace ("[TRACE] attackSelect - from: " ++ show from ++ ", attack: " ++ showHex8 attack) $
+        debug ("[TRACE] attackSelect - from: " ++ show from ++ ", attack: " ++ showHex8 attack) $
         if attack == 0x53 || attack == 0x59
         then
             let m' = m { buff = buff m .|. 0x08 } in
@@ -296,8 +300,8 @@ selectTarget members from range seed
     loop seed =
         let seed' = nextRng seed
             sel = fromIntegral (seed' .>>. 13) in
-        -- trace ("[TRACE] selectTarget.loop - from: " ++ show from ++ ", sel: " ++ show sel) $
-        -- trace ("[TRACE] selectTarget.loop - from: " ++ show from ++ ", seed: " ++ showHex16 seed') $
+        debug ("[TRACE] selectTarget.loop - from: " ++ show from ++ ", sel: " ++ show sel) $
+        debug ("[TRACE] selectTarget.loop - from: " ++ show from ++ ", seed: " ++ showHex16 seed') $
         if alive (members !! sel) && rangeSelect range sel then (sel, seed')
         else loop seed'
     rangeSelect range sel =
@@ -308,8 +312,8 @@ selectTarget members from range seed
     noncharloop seed =
         let seed' = nextRng seed
             sel = fromIntegral (seed' .>>. 13) .|. 4 in
-        -- trace ("[TRACE] selectTarget.noncharloop - from: " ++ show from ++ ", sel: " ++ show sel) $
-        -- trace ("[TRACE] selectTarget.noncharloop - from: " ++ show from ++ ", seed: " ++ showHex16 seed') $
+        debug ("[TRACE] selectTarget.noncharloop - from: " ++ show from ++ ", sel: " ++ show sel) $
+        debug ("[TRACE] selectTarget.noncharloop - from: " ++ show from ++ ", seed: " ++ showHex16 seed') $
         if alive (members !! sel) then (sel, seed')
         else noncharloop seed'
 
@@ -390,13 +394,13 @@ applyDamage dmg members from to s =
                         else (mTo'', history', s''')
                     else (mTo'', history', s'') in
                 (insertAt members to mTo''', history'', s''') in
-    -- trace ("[TRACE] applyDamage - seed: " ++ showHex16 s)
-    -- trace ("[TRACE] applyDamage - dmg: " ++ show dmg)
-    -- trace ("[TRACE] applyDamage - dmg': " ++ show dmg')
-    -- trace ("[TRACE] applyDamage - dmg'': " ++ show dmg'')
-    -- trace ("[TRACE] applyDamage - dmg''': " ++ show dmg''')
-    -- trace ("[TRACE] applyDamage - dmg'''': " ++ show dmg'''')
-    -- trace ("[TRACE] applyDamage - inflicted damage: " ++ show dmg'''' ++ ", from: " ++ show from ++ ", to: " ++ show to ++ ", seed: " ++ showHex16 s'')
+    debug ("[TRACE] applyDamage - seed: " ++ showHex16 s)
+    debug ("[TRACE] applyDamage - dmg: " ++ show dmg)
+    debug ("[TRACE] applyDamage - dmg': " ++ show dmg')
+    debug ("[TRACE] applyDamage - dmg'': " ++ show dmg'')
+    debug ("[TRACE] applyDamage - dmg''': " ++ show dmg''')
+    debug ("[TRACE] applyDamage - dmg'''': " ++ show dmg'''')
+    debug ("[TRACE] applyDamage - inflicted damage: " ++ show dmg'''' ++ ", from: " ++ show from ++ ", to: " ++ show to ++ ", seed: " ++ showHex16 s'')
     (battleEnd members', members', printf "%s suffered damage of %d." (name mTo) dmg'''' : history, s'')
 
 type ActionRet = (TurnState, [Member], [String], Word16)
@@ -936,7 +940,7 @@ battleTurn members seed =
                 m2 = (members' !! i) { attackSel = id }
                 members'' = insertAt members' i m2
                 range = getAttackRange id in
-            -- trace ("[TRACE] battleTurn - selected attack: " ++ showHex8 id ++ ", range: " ++ show range ++ ", from: " ++ show i) $
+            debug ("[TRACE] battleTurn - selected attack: " ++ showHex8 id ++ ", range: " ++ show range ++ ", from: " ++ show i) $
             case range of
             All ->
                 let m3 = m2 { attackTarg = i } in
@@ -944,10 +948,10 @@ battleTurn members seed =
             _ ->
                 let (j, seed'') = selectTarget members'' i range seed'
                     m3 = m2 { attackTarg = j } in
-                -- trace ("[TRACE] battleTurn - selected target: " ++ show j)
+                debug ("[TRACE] battleTurn - selected target: " ++ show j)
                 (insertAt members'' i m3, seed'')) (members, seed) (zip members [0..]) in
-    -- trace ("[TRACE] battleTurn - members after move selection: \n" ++ intercalate "\n" (map showMember members')) $
-    -- trace ("[TRACE] battleTurn - seed after move selection: " ++ showHex16 seed') $
+    debug ("[TRACE] battleTurn - members after move selection: \n" ++ intercalate "\n" (map showMember members')) $
+    debug ("[TRACE] battleTurn - seed after move selection: " ++ showHex16 seed') $
     runUntilStop $ 
     scanl (\(ts, members, history, seed) _ ->
         let (caster, seed') = battlePriority members seed
@@ -957,7 +961,7 @@ battleTurn members seed =
                             let m = members' !! caster in
                             insertAt members' caster (m { attackSel = 0xff })
                         _ -> members' in
-            -- trace ("[TRACE] battleTurn - current caster: " ++ show caster ++ ", seed: " ++ showHex16 seed')
+            debug ("[TRACE] battleTurn - current caster: " ++ show caster ++ ", seed: " ++ showHex16 seed')
         (ts, members'', history ++ history', seed'')) (Continue, members', [], seed') members where
     runUntilStop scan =
         case find (\(ts, _, _, _) -> ts /= Continue) scan of
