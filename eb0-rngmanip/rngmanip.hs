@@ -39,7 +39,9 @@ data Member = Member
     , buff ::       Word8
     , attackList :: [Word8]
     , bag ::        [Word8]
-    , xp ::         Word32
+    , level ::      Word8
+    , experience :: Word32
+    , yieldedXp ::  Word32
     } deriving (Show, Eq)
 
 -- constants
@@ -96,7 +98,9 @@ emptyMember = Member
     , buff =       0x00
     , attackList = []
     , bag =        []
-    , xp =         0x00000000 }
+    , level =      0x00
+    , experience = 0x000000
+    , yieldedXp =  0x000000 }
 
 -- stat growth constants (Fight, Speed, Wisdom, Strength, Force)
 statUpMap :: Map Word8 (Word8, Word8, Word8, Word8, Word8)
@@ -104,6 +108,9 @@ statUpMap = fromList
     [ (0x01, (0x04, 0x04, 0x04, 0x04, 0x04))   -- Ninten
     , (0x03, (0x03, 0x01, 0x07, 0x03, 0x02))   -- Lloyd
     , (0x06, (0x05, 0x03, 0x05, 0x07, 0x01)) ] -- EVE
+
+levelUpMap :: Map Word8 Word8
+levelUpMap = fromList [ (0x01, 0xd6), (0x03, 0xc0) ]
 
 -- NOTE: 0x92 is bomber, 0x9a is 4 starmen
 
@@ -185,7 +192,9 @@ showMember member =
         "  res:  " ++ showHex8 (resistance member) ++ "\n" ++
         "  atl:  " ++ "[ " ++ intercalate ", " (map showHex8 (attackList member)) ++ " ]\n" ++
         "  bag:  " ++ "[ " ++ intercalate ", " (map showHex8 (bag member)) ++ " ]\n" ++
-        "  xp:   " ++ showHex24 (xp member) ++ "\n" ++
+        "  lvl:  " ++ showHex8 (level member) ++ "\n" ++
+        "  xp:   " ++ showHex24 (experience member) ++ "\n" ++
+        "  yxp:  " ++ showHex24 (yieldedXp member) ++ "\n" ++
     "}"
 
 -- read from file functions
@@ -212,7 +221,9 @@ readMember entries =
         res = to8 <$> (readHex =<< assq !? "resistance")
         atl = map to8 <$> (mapM readHex . split ',' =<< assq !? "attackList")
         bg' = map to8 <$> (mapM readHex . split ',' =<< assq !? "bag")
-        xp' = to32 <$> (readHex =<< assq !? "xp") in
+        lvl = to8 <$> (readHex =<< assq !? "level")
+        xp' = to32 <$> (readHex =<< assq !? "experience")
+        yxp = to32 <$> (readHex =<< assq !? "yieldedXp") in
     emptyMember { name = memberF "name" name
                 , charID = memberFOpt charID id'
                 , hp = memberF "hp" hp'
@@ -233,7 +244,9 @@ readMember entries =
                 , resistance = memberF "resistance" res
                 , attackList = memberFOpt attackList atl
                 , bag = memberFOpt bag bg'
-                , xp = memberFOpt xp xp' }
+                , level = memberFOpt level lvl
+                , experience = memberFOpt experience xp'
+                , yieldedXp = memberFOpt yieldedXp yxp }
     where list2tuple [x, y] = Just (x, y) 
           list2tuple _ = Nothing
           memberF _ (Just e) = e
@@ -406,7 +419,7 @@ applyDamage dmg members from to s =
         dmg'''' = if dmg''' == 0x0000 then 0x0001 else dmg'''
         (members', history, s'') = 
             if hp mTo <= dmg''''
-            then (insertAt members to (mTo { hp = 0x0000, status = status mTo .|. 0x80 }),
+            then (insertAt members to (mTo { hp = 0x0000, status = status mTo .|. 0x80, statusMask = 0x00 }),
                   [printf "%s was beaten!" (name mTo)], s')
             else 
                 let mTo' = if charID mTo /= 0x06 then mTo { hp = hp mTo - dmg'''' } else mTo
@@ -1025,15 +1038,31 @@ battleBegin members seed =
     let members' = zipWith (\m a -> m { attackSel = a }) members [0x00, 0x00, 0x00, 0x00, 0x5e, 0x5e, 0x5e, 0x5e] in
     runMembersAttacks (Continue, members', [], seed)
 
-levelUpStatsFunc :: [Member] -> [String] -> Word16 -> ([Member], [String], Word16)
-levelUpStatsFunc members history seed =
-    -- (members, history, seed)
-    -- only some levelup of first member for debug
-    let (member, history', seed') = levelUp ((\(x:_)->x) members) history seed
-        (member', history'', seed'') = levelUp member history' seed'
-        (member'', history''', seed''') = levelUp member' history'' seed'' in
-    (insertAt members 0 member'', history''', seed''')
+nbAlive :: [Member] -> Int
+nbAlive = length . filter (\m -> alive m && (charID m /= 0x06))
+
+charLeveling :: [Member] -> [String] ->  Word16 -> ([Member], [String], Word16)
+charLeveling members history seed =
+    let totXp = sum (map yieldedXp (filter (not . alive) (drop 4 members)))
+        n = to32 (nbAlive (take 4 members))
+        divXp = totXp `div` n
+        modXp = totXp `mod` n
+        xp = divXp + (if modXp /= 0 then 0x000001 else 0x000000)
+        members' = map (\m -> if alive m && (charID m /= 0x06) then m { experience = experience m + xp } else m) (take 4 members)
+        (members'', history', seed') = levelUpLoop members' [] history seed xp in
+    debug ("[TRACE] charLeveling - xp: " ++ showHex24 xp ++ ", n: " ++ show n ++ ", totXp: " ++ showHex24 totXp)
+    (members'' ++ drop 4 members, history', seed')
     where
+    levelUpLoop (member : ml) members history seed xp =
+        let id = charID member
+            lvl = to32 (level member + 1)
+            neededXp = (lvl * lvl * (lvl + 1) * to32 (fromJust (levelUpMap !? id))) .>>. 8 in
+        if id /= 0x06 && alive member && level member < 99 && experience member >= neededXp
+        then let (member', history', seed') = levelUp member history seed in
+             debug ("[TRACE] charLeveling - id: " ++ showHex8 id ++ ", xp: " ++ showHex24 (experience member) ++ ", neededXp: " ++ showHex24 neededXp) $
+             levelUpLoop (member' : ml) members history' seed' xp
+        else levelUpLoop ml (members ++ [member]) history seed xp
+    levelUpLoop [] members history seed xp = (members, history, seed)
     statFunc const seed = (const + to8 (seed .>>. 14)) .>>. 1
     textFuncLoop ((i, txt) : l) h s =
         if i == 0x00 then textFuncLoop l h s else
@@ -1068,7 +1097,7 @@ levelUpStatsFunc members history seed =
     ppFunc for mpp seed =
         let n = to16 ((for .>>. 1) + for) in
         hpppf n mpp seed
-    incrStat s x = if to16 s + to16 x > 0xff then 0xff else s + x
+    incrStat s x = if to16 s + to16 x > 0x00ff then 0xff else s + x
     levelUp member history seed =
         let id = charID member
             name' = name member
@@ -1091,7 +1120,8 @@ levelUpStatsFunc members history seed =
                 , speed = incrStat (speed member) speI
                 , wisdom = incrStat (wisdom member) wisI
                 , strength = incrStat (strength member) stgI
-                , force = incrStat (force member) forI }
+                , force = incrStat (force member) forI
+                , level = incrStat (level member) 0x01 }
             (h, s) <- return $ textFunc (figI, speI, wisI, stgI, forI) h s
             s <- return $ nextRng s
             let hpI = hpFunc (strength member) (maxHp member) s
@@ -1110,7 +1140,7 @@ levelUpStatsFunc members history seed =
 
 battleWin :: [Member] -> [String] -> Word16 -> ([Member], [String], Word16)
 battleWin members history seed =
-    levelUpStatsFunc members history (seed + 0)
+    charLeveling members (history ++ ["YOU WIN!"]) (seed + 0)
 
 -- battle :: [Member] -> Word16 -> Int -> (ActionRet, Int)
 -- battle members seed time =
@@ -1142,7 +1172,7 @@ successfulBattle members seed time =
         (case ts of
          Continue -> loop rhist members' seed' time' rwaits
          Win ->
-            let (members'', hist'', seed'') = battleWin members rhist seed' in
+            let (members'', hist'', seed'') = battleWin members' rhist seed' in
             -- TODO: recompute time
             ((ts, members'', hist'', seed''), time', rwaits)
          Loss -> error "successfulBattle: found a Loss during search")
@@ -1159,9 +1189,6 @@ successfulBattle members seed time =
             (Loss, _, _, _) -> Nothing
             ret -> Just (ret, i)) (ints 0)
 
--- nbAlive :: [Member] -> Int
--- nbAlive = length . filter alive
--- 
 -- getEncounters :: Word16 -> Word8 -> [(Word16, Bool)]
 -- getEncounters seed threshold =
 --     let rngs = iterate nextRng seed 
