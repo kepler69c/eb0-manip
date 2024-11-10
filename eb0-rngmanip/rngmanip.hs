@@ -16,11 +16,14 @@ data Range = All | Ally | Enemy deriving Show
 
 data TurnState = Win | Continue | Loss deriving (Show, Eq)
 
+-- TODO: add maxHp... stats as well as exp (and lvl ?, can be computed from exp)
 data Member = Member
     { name ::       String
     , charID ::     Word8
     , hp ::         Word16
+    , maxHp ::      Word16
     , pp ::         Word16
+    , maxPp ::      Word16
     , attack ::     Word16
     , defense ::    Word16
     , fight ::      Word8
@@ -36,6 +39,7 @@ data Member = Member
     , buff ::       Word8
     , attackList :: [Word8]
     , bag ::        [Word8]
+    , xp ::         Word32
     } deriving (Show, Eq)
 
 -- constants
@@ -74,7 +78,9 @@ emptyMember = Member
     { name =       ""
     , charID =     0x00
     , hp =         0x0000
+    , maxHp =      0x0000
     , pp =         0x0000
+    , maxPp =      0x0000
     , attack =     0x0000
     , defense =    0x0000
     , fight =      0x00
@@ -89,14 +95,15 @@ emptyMember = Member
     , resistance = 0x00
     , buff =       0x00
     , attackList = []
-    , bag =        [] }
+    , bag =        []
+    , xp =         0x00000000 }
 
 -- stat growth constants (Fight, Speed, Wisdom, Strength, Force)
-statUpConst :: Map Int (Word8, Word8, Word8, Word8, Word8)
-statUpConst = fromList
-    [ (1, (0x04, 0x04, 0x04, 0x04, 0x04))   -- Ninten
-    , (3, (0x03, 0x01, 0x07, 0x03, 0x02))   -- Lloyd
-    , (6, (0x05, 0x03, 0x05, 0x07, 0x01)) ] -- EVE
+statUpMap :: Map Word8 (Word8, Word8, Word8, Word8, Word8)
+statUpMap = fromList
+    [ (0x01, (0x04, 0x04, 0x04, 0x04, 0x04))   -- Ninten
+    , (0x03, (0x03, 0x01, 0x07, 0x03, 0x02))   -- Lloyd
+    , (0x06, (0x05, 0x03, 0x05, 0x07, 0x01)) ] -- EVE
 
 -- NOTE: 0x92 is bomber, 0x9a is 4 starmen
 
@@ -131,16 +138,23 @@ insertAt l i e =
     let (l1, _ : l2) = splitAt i l in
     l1 ++ e : l2
 
-debugFlag = False
+debugFlag = True
 
 debug str a = if debugFlag then trace str a else a
 
+ror (a, c) = ((a .>>. 1) + (if c then 0x80 else 0x00), (a .&. 0x01) /= 0x00)
+
+execCont = flip runCont id
+
 -- show functions
+showHex8 :: Word8 -> String
+showHex8 = printf "0x%02x"
+
 showHex16 :: Word16 -> String
 showHex16 = printf "0x%04x"
 
-showHex8 :: Word8 -> String
-showHex8 = printf "0x%02x"
+showHex24 :: Word32 -> String
+showHex24 x = printf "0x%06x" (x .&. 0xffffff)
 
 readHex :: String -> Maybe Int
 readHex ('0' : 'x' : n) =
@@ -154,7 +168,9 @@ showMember member =
         "  name: " ++ name member ++ "\n" ++
         "  id:   " ++ showHex8 (charID member) ++ "\n" ++
         "  hp:   " ++ showHex16 (hp member) ++ "\n" ++
+        "  mhp:  " ++ showHex16 (maxHp member) ++ "\n" ++
         "  pp:   " ++ showHex16 (pp member) ++ "\n" ++
+        "  mpp:  " ++ showHex16 (maxPp member) ++ "\n" ++
         "  atk:  " ++ showHex16 (attack member) ++ "\n" ++
         "  def:  " ++ showHex16 (defense member) ++ "\n" ++
         "  fig:  " ++ showHex8 (fight member) ++ "\n" ++
@@ -169,17 +185,19 @@ showMember member =
         "  res:  " ++ showHex8 (resistance member) ++ "\n" ++
         "  atl:  " ++ "[ " ++ intercalate ", " (map showHex8 (attackList member)) ++ " ]\n" ++
         "  bag:  " ++ "[ " ++ intercalate ", " (map showHex8 (bag member)) ++ " ]\n" ++
+        "  xp:   " ++ showHex24 (xp member) ++ "\n" ++
     "}"
 
 -- read from file functions
--- TODO: improve? maybe with a list of optional or not fields
 readMember :: [String] -> Member
 readMember entries =
     let assq = fromList $ map (fromJust . list2tuple . split ':') entries
         name = assq !? "name"
         id' = to8 <$> (readHex =<< assq !? "charID")
         hp' = to16 <$> (readHex =<< assq !? "hp")
+        mhp = to16 <$> (readHex =<< assq !? "maxHp")
         pp' = to16 <$> (readHex =<< assq !? "pp")
+        mpp = to16 <$> (readHex =<< assq !? "maxPp")
         atk = to16 <$> (readHex =<< assq !? "attack")
         def = to16 <$> (readHex =<< assq !? "defense")
         fig = to8 <$> (readHex =<< assq !? "fight")
@@ -193,11 +211,14 @@ readMember entries =
         stm = to8 <$> (readHex =<< assq !? "statusMask")
         res = to8 <$> (readHex =<< assq !? "resistance")
         atl = map to8 <$> (mapM readHex . split ',' =<< assq !? "attackList")
-        bg' = map to8 <$> (mapM readHex . split ',' =<< assq !? "bag") in
+        bg' = map to8 <$> (mapM readHex . split ',' =<< assq !? "bag")
+        xp' = to32 <$> (readHex =<< assq !? "xp") in
     emptyMember { name = memberF "name" name
                 , charID = memberFOpt charID id'
                 , hp = memberF "hp" hp'
+                , maxHp = memberFOpt maxHp mhp
                 , pp = memberF "pp" pp'
+                , maxPp = memberFOpt maxPp mpp
                 , attack = memberF "attack" atk
                 , defense = memberF "defense" def
                 , fight = memberF "fight" fig
@@ -211,7 +232,8 @@ readMember entries =
                 , statusMask = memberF "statusMask" stm
                 , resistance = memberF "resistance" res
                 , attackList = memberFOpt attackList atl
-                , bag = memberFOpt bag bg' }
+                , bag = memberFOpt bag bg'
+                , xp = memberFOpt xp xp' }
     where list2tuple [x, y] = Just (x, y) 
           list2tuple _ = Nothing
           memberF _ (Just e) = e
@@ -277,8 +299,8 @@ battlePriority members seed =
         -- find max
         _ -> let (s, seed') = valueRoll (0x00ff .&. to16 (speed m)) seed
                  s' = min s 0xff in
-             debug ("[TRACE] battlePriority - value rolled: " ++ showHex16 s' ++ " for member: " ++ show i ++ ", seed: " ++ showHex16 seed') $
-             debug ("[TRACE] battlePriority - maxSpeed: " ++ showHex16 maxSpeed ++ ", selected target: " ++ show maxTarget) $
+             debug ("[TRACE] battlePriority - value rolled: " ++ showHex16 s' ++ " for member: " ++ show i ++ ", seed: " ++ showHex16 seed')
+             debug ("[TRACE] battlePriority - maxSpeed: " ++ showHex16 maxSpeed ++ ", selected target: " ++ show maxTarget)
              loop (if s' >= maxSpeed
                    then (s', i, i + 1, seed')
                    else (maxSpeed, maxTarget, i + 1, seed')) members
@@ -310,7 +332,7 @@ selectTarget members from range seed
     loop seed =
         let seed' = nextRng seed
             sel = fromIntegral (seed' .>>. 13) in
-        debug ("[TRACE] selectTarget.loop - from: " ++ show from ++ ", sel: " ++ show sel) $
+        debug ("[TRACE] selectTarget.loop - from: " ++ show from ++ ", sel: " ++ show sel)
         debug ("[TRACE] selectTarget.loop - from: " ++ show from ++ ", seed: " ++ showHex16 seed') $
         if alive (members !! sel) && rangeSelect range sel then (sel, seed')
         else loop seed'
@@ -322,7 +344,7 @@ selectTarget members from range seed
     noncharloop seed =
         let seed' = nextRng seed
             sel = fromIntegral (seed' .>>. 13) .|. 4 in
-        debug ("[TRACE] selectTarget.noncharloop - from: " ++ show from ++ ", sel: " ++ show sel) $
+        debug ("[TRACE] selectTarget.noncharloop - from: " ++ show from ++ ", sel: " ++ show sel)
         debug ("[TRACE] selectTarget.noncharloop - from: " ++ show from ++ ", seed: " ++ showHex16 seed') $
         if alive (members !! sel) then (sel, seed')
         else noncharloop seed'
@@ -338,7 +360,6 @@ getAttackRange attackId =
     1 -> Ally
     _ -> Enemy
     where
-    ror (a, c) = ((a .>>. 1) + (if c then 0x80 else 0x00), (a .&. 0x01) /= 0x00)
     loop a b = if (a .&. 0x01) /= 0x00 then b else loop (a .>>. 1) (b .>>. 1)
 
 -- for crit  - from: caster,   to: receiver
@@ -486,13 +507,13 @@ runAction :: ActionRet -> Int -> ActionGraph -> ActionRet
 runAction (ts, m, h, s) fr (amap, adec, afp) =
     let initMem = ActionMem { afFrom = fr, afTo = attackTarg (m !! fr), afDamage = Nothing, afParam = afp }
         initCont = (ts, m, h, s, initMem) in
-    runCont (callCC $ \exit -> do
+    execCont $ callCC $ \exit -> do
         (loop, (cont, i)) <- label (initCont, 0)
         (b, cont) <- (amap ! i) cont exit
         (case (adec ! i, b) of
          (Next j, _) -> loop (cont, j)
          (NextYN (j, _), True) -> loop (cont, j)
-         (NextYN (_, j), False) -> loop (cont, j))) id
+         (NextYN (_, j), False) -> loop (cont, j))
 
 afConfusion :: ActionFun
 afConfusion (ts, m, h, s, am) _ =
@@ -926,7 +947,7 @@ afp5e = ActionParam
 
 performAttack :: [Member] -> Int -> Word16 -> ActionRet
 performAttack m from s =
-    runCont (callCC $ \exit -> callCC $ \exit2 -> do
+    execCont $ callCC $ \exit -> callCC $ \exit2 -> do
     (ts, m, h, s) <- performStatus m from s exit2
     (if ts /= Continue then exit (ts, m, h, s) else
      (case attackSel (m !! from) of
@@ -954,7 +975,7 @@ performAttack m from s =
       0x53 -> runGraph (map53, dec53, afp53) m h s
       -- draws near
       0x5e -> runGraph (map5e, dec5e, afp5e) m h s
-      e -> error $ printf "performAttack: unsupported attack \"0x%02hhx\"." e))) id
+      e -> error $ printf "performAttack: unsupported attack \"0x%02hhx\"." e))
     where runGraph g m h s = return $ runAction (Continue, m, h, s) from g
 
 runMembersAttacks :: ActionRet -> ActionRet
@@ -995,30 +1016,116 @@ battleTurn members seed skip =
                     m3 = m2 { attackTarg = j } in
                 debug ("[TRACE] battleTurn - selected target: " ++ show j)
                 (insertAt members'' i m3, seed'')) (members, seed) (zip members [0..]) in
-    debug ("[TRACE] battleTurn - members after move selection: \n" ++ intercalate "\n" (map showMember members')) $
-    debug ("[TRACE] battleTurn - seed after move selection: " ++ showHex16 seed') $
+    debug ("[TRACE] battleTurn - members after move selection: \n" ++ intercalate "\n" (map showMember members'))
+    debug ("[TRACE] battleTurn - seed after move selection: " ++ showHex16 seed')
     runMembersAttacks (Continue, members', [], seed')
 
 battleBegin :: [Member] -> Word16 -> ActionRet
 battleBegin members seed =
-    let members' = zipWith (\m a -> m { attackSel = a })
-            members [0x00, 0x00, 0x00, 0x00, 0x5e, 0x5e, 0x5e, 0x5e] in
+    let members' = zipWith (\m a -> m { attackSel = a }) members [0x00, 0x00, 0x00, 0x00, 0x5e, 0x5e, 0x5e, 0x5e] in
     runMembersAttacks (Continue, members', [], seed)
 
-battle :: [Member] -> Word16 -> Int -> (ActionRet, Int)
-battle members seed time =
-    let (ts, members', hist, seed') = battleBegin members seed
-        time' = time + sum (map length hist) + (length hist * 10) + 100 in
-    loop hist members' seed' time'
+levelUpStatsFunc :: [Member] -> [String] -> Word16 -> ([Member], [String], Word16)
+levelUpStatsFunc members history seed =
+    -- (members, history, seed)
+    -- only some levelup of first member for debug
+    let (member, history', seed') = levelUp ((\(x:_)->x) members) history seed
+        (member', history'', seed'') = levelUp member history' seed'
+        (member'', history''', seed''') = levelUp member' history'' seed'' in
+    (insertAt members 0 member'', history''', seed''')
     where
-    loop hist members seed time =
-        let (ts, members', hist', seed') = battleTurn members seed 0
-            -- improvable heuristic: text size time is added to turn time
-            time' = time + sum (map length hist') + (length hist' * 10) + 100
-            rhist = hist ++ hist' in
-        (case ts of
-         Continue -> loop rhist members' seed' time'
-         _ -> ((ts, members', rhist, seed'), time'))
+    statFunc const seed = (const + to8 (seed .>>. 14)) .>>. 1
+    textFuncLoop ((i, txt) : l) h s =
+        if i == 0x00 then textFuncLoop l h s else
+        let s' = skipRng 24 s
+            h' = h ++ [printf "%s has increased by %d." txt i] in
+        textFuncLoop l h' s'
+    textFuncLoop _ h s = (h, s)
+    textFunc (figI, speI, wisI, stgI, forI) h s =
+        let l = [(figI, "FIGHT"), (speI, "SPEED"), (wisI, "WISDOM"),
+                 (stgI, "STRENGTH"), (forI, "FORCE")] in
+        textFuncLoop l h s
+    hpppf val stat seed =
+        let n = val - stat
+            y | (val .&. 0xff00) == (stat .&. 0xff00) = min 0x10 (2 * to8 n)
+              | val < stat = 0x08
+              | otherwise = 0x01
+            x = to8 (seed .>>. 11) in
+        execCont $ do
+            (x, c) <- return $ ror (x, False)
+            (i, a) <- return (0x08, 0x00)
+            (loop, (x, c, i, a)) <- label (x, c, i, a)
+            (x, c) <- return $ ror (x, c)
+            (a, c) <- return $ if c then (a + y, to16 a + to16 y > 0x00ff) else (a, c)
+            (a, c) <- return $ ror (a, c)
+            i <- return $ i - 1
+            when (i /= 0x00) (loop (x, c, i, a))
+            (x, _) <- return $ ror (x, c)
+            return $ to8 (x .>>. 4)
+    hpFunc str mhp seed =
+        let n = to16 (if to16 str + 0x0014 > 0x00ff then 0xff else str + 0x14) + to16 str in
+        hpppf n mhp seed
+    ppFunc for mpp seed =
+        let n = to16 ((for .>>. 1) + for) in
+        hpppf n mpp seed
+    incrStat s x = if to16 s + to16 x > 0xff then 0xff else s + x
+    levelUp member history seed =
+        let id = charID member
+            name' = name member
+            h = history ++ [printf "%s advanced to the next Level!" name']
+            (figC, speC, wisC, stgC, forC) = statUpMap ! id
+            s = skipRng 24 seed in
+        execCont $ callCC $ \exit -> do
+            s <- return $ nextRng s
+            let figI = statFunc figC s
+            s <- return $ nextRng s
+            let speI = statFunc speC s
+            s <- return $ nextRng s
+            let wisI = statFunc wisC s
+            s <- return $ nextRng s
+            let stgI = statFunc stgC s
+            s <- return $ nextRng s
+            let forI = statFunc forC s
+            member <- return $ member
+                { fight = incrStat (fight member) figI
+                , speed = incrStat (speed member) speI
+                , wisdom = incrStat (wisdom member) wisI
+                , strength = incrStat (strength member) stgI
+                , force = incrStat (force member) forI }
+            (h, s) <- return $ textFunc (figI, speI, wisI, stgI, forI) h s
+            s <- return $ nextRng s
+            let hpI = hpFunc (strength member) (maxHp member) s
+            (h, s) <- return $ if hpI /= 0x00
+                               then (h ++ [printf "Maximum HP has increased by %d." hpI], skipRng 24 s)
+                               else (h, s)
+            member <- return $ member { maxHp = maxHp member + to16 hpI }
+            when (charID member == 0x03) (exit (member, h, s))
+            s <- return $ nextRng s
+            let ppI = ppFunc (force member) (maxPp member) s
+            (h, s) <- return $ if ppI /= 0x00
+                               then (h ++ [printf "Maximum PP has increased by %d." ppI], skipRng 24 s)
+                               else (h, s)
+            member <- return $ member { maxPp = maxPp member + to16 ppI }
+            return (member, h, s)
+
+battleWin :: [Member] -> [String] -> Word16 -> ([Member], [String], Word16)
+battleWin members history seed =
+    levelUpStatsFunc members history (seed + 0)
+
+-- battle :: [Member] -> Word16 -> Int -> (ActionRet, Int)
+-- battle members seed time =
+--     let (ts, members', hist, seed') = battleBegin members seed
+--         time' = time + sum (map length hist) + (length hist * 10) + 100 in
+--     loop hist members' seed' time'
+--     where
+--     loop hist members seed time =
+--         let (ts, members', hist', seed') = battleTurn members seed 0
+--             -- improvable heuristic: text size time is added to turn time
+--             time' = time + sum (map length hist') + (length hist' * 10) + 100
+--             rhist = hist ++ hist' in
+--         (case ts of
+--          Continue -> loop rhist members' seed' time'
+--          _ -> ((ts, members', rhist, seed'), time'))
 
 successfulBattle :: [Member] -> Word16 -> Int -> (ActionRet, Int, [Int])
 successfulBattle members seed time =
@@ -1028,13 +1135,16 @@ successfulBattle members seed time =
     where
     loop hist members seed time waits =
         let ((ts, members', hist', seed'), wait) = findBattleTurn members seed
-            -- improvable heuristic: text size time is added to turn time
+            -- TODO: compute real frames
             time' = time + sum (map length hist') + (length hist' * 10) + wait * 20 + 100
             rhist = hist ++ hist'
             rwaits = waits ++ [wait] in
         (case ts of
          Continue -> loop rhist members' seed' time' rwaits
-         Win -> ((ts, members', rhist, seed'), time', rwaits)
+         Win ->
+            let (members'', hist'', seed'') = battleWin members rhist seed' in
+            -- TODO: recompute time
+            ((ts, members'', hist'', seed''), time', rwaits)
          Loss -> error "successfulBattle: found a Loss during search")
     succ i = i + 1
     ints = iterate succ
@@ -1079,11 +1189,11 @@ successfulBattle members seed time =
 
 main = do
     members <- readBattleMembers "team.txt" "enc9a.txt"
-    ((_, members', h, s), t, w) <- return $ successfulBattle members 0x1234 0
+    ((_, members', h, s), t, w) <- return $ successfulBattle members 0x8792 0
     putStrLn "h:"
     mapM_ putStrLn h
     putStrLn $ "seed: " ++ showHex16 s
-    -- putStrLn "members':"
-    -- mapM_ (putStrLn . showMember) members'
+    --putStrLn "members':"
+    --mapM_ (putStrLn . showMember) members'
     putStrLn $ "time: " ++ show t
     putStrLn $ "waits: " ++ show w

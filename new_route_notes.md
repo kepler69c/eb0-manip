@@ -1,5 +1,3 @@
-idea: get Super Bomb to kill The Fish in Magicent (OBSOLETE)
-
 route:
 - traditional route until Merrysville
 - buy 3 Breads then go to Duncan's (manip)
@@ -17,4 +15,4 @@ route:
 - use Loid's Crumbs
 - destroy game
 
-maybe, try extend the manip after death wrap ? even tough it's fine if it fails (it might be a timeloss though, if TP is faster)
+maybe, try extend the manip after death wrap ? it's fine if it fails (manip might be a timeloss if TP movement is faster)
