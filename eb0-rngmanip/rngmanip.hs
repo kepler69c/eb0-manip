@@ -1038,32 +1038,52 @@ battleBegin members seed =
     let members' = zipWith (\m a -> m { attackSel = a }) members [0x00, 0x00, 0x00, 0x00, 0x5e, 0x5e, 0x5e, 0x5e] in
     runMembersAttacks (Continue, members', [], seed)
 
-nbAlive :: [Member] -> Int
-nbAlive = length . filter (\m -> alive m && (charID m /= 0x06))
+-- nbAlive :: [Member] -> Int
+-- nbAlive = length . filter (\m -> alive m && (charID m /= 0x06))
 
-charLeveling :: [Member] -> [String] ->  Word16 -> ([Member], [String], Word16)
-charLeveling members history seed =
-    let totXp = sum (map yieldedXp (filter (not . alive) (drop 4 members)))
-        n = to32 (nbAlive (take 4 members))
-        divXp = totXp `div` n
-        modXp = totXp `mod` n
-        xp = divXp + (if modXp /= 0 then 0x000001 else 0x000000)
-        members' = map (\m -> if alive m && (charID m /= 0x06) then m { experience = experience m + xp } else m) (take 4 members)
-        (members'', history', seed') = levelUpLoop members' [] history seed xp in
-    debug ("[TRACE] charLeveling - xp: " ++ showHex24 xp ++ ", n: " ++ show n ++ ", totXp: " ++ showHex24 totXp)
-    (members'' ++ drop 4 members, history', seed')
+levelUp :: Member -> [String] -> Word16 -> (Member, [String], Word16)
+levelUp member history seed =
+    let id = charID member
+        name' = name member
+        h = history ++ [printf "%s advanced to the next Level!" name']
+        (figC, speC, wisC, stgC, forC) = statUpMap ! id
+        s = skipRng 24 seed in
+    execCont $ callCC $ \exit -> do
+        s <- return $ nextRng s
+        let figI = statFunc figC s
+        s <- return $ nextRng s
+        let speI = statFunc speC s
+        s <- return $ nextRng s
+        let wisI = statFunc wisC s
+        s <- return $ nextRng s
+        let stgI = statFunc stgC s
+        s <- return $ nextRng s
+        let forI = statFunc forC s
+        member <- return $ member
+            { fight = incrStat (fight member) figI
+            , speed = incrStat (speed member) speI
+            , wisdom = incrStat (wisdom member) wisI
+            , strength = incrStat (strength member) stgI
+            , force = incrStat (force member) forI
+            , level = incrStat (level member) 0x01 }
+        (h, s) <- return $ textFunc (figI, speI, wisI, stgI, forI) h s
+        s <- return $ nextRng s
+        let hpI = hpFunc (strength member) (maxHp member) s
+        (h, s) <- return $ if hpI /= 0x00
+                           then (h ++ [printf "Maximum HP has increased by %d." hpI], skipRng 24 s)
+                           else (h, s)
+        member <- return $ member { maxHp = maxHp member + to16 hpI }
+        when (charID member == 0x03) (exit (member, h, s))
+        s <- return $ nextRng s
+        let ppI = ppFunc (force member) (maxPp member) s
+        (h, s) <- return $ if ppI /= 0x00
+                           then (h ++ [printf "Maximum PP has increased by %d." ppI], skipRng 24 s)
+                           else (h, s)
+        member <- return $ member { maxPp = maxPp member + to16 ppI }
+        return (member, h, s)
     where
-    levelUpLoop (member : ml) members history seed xp =
-        let id = charID member
-            lvl = to32 (level member + 1)
-            neededXp = (lvl * lvl * (lvl + 1) * to32 (fromJust (levelUpMap !? id))) .>>. 8 in
-        if id /= 0x06 && alive member && level member < 99 && experience member >= neededXp
-        then let (member', history', seed') = levelUp member history seed in
-             debug ("[TRACE] charLeveling - id: " ++ showHex8 id ++ ", xp: " ++ showHex24 (experience member) ++ ", neededXp: " ++ showHex24 neededXp) $
-             levelUpLoop (member' : ml) members history' seed' xp
-        else levelUpLoop ml (members ++ [member]) history seed xp
-    levelUpLoop [] members history seed xp = (members, history, seed)
     statFunc const seed = (const + to8 (seed .>>. 14)) .>>. 1
+    incrStat s x = if to16 s + to16 x > 0x00ff then 0xff else s + x
     textFuncLoop ((i, txt) : l) h s =
         if i == 0x00 then textFuncLoop l h s else
         let s' = skipRng 24 s
@@ -1097,46 +1117,34 @@ charLeveling members history seed =
     ppFunc for mpp seed =
         let n = to16 ((for .>>. 1) + for) in
         hpppf n mpp seed
-    incrStat s x = if to16 s + to16 x > 0x00ff then 0xff else s + x
-    levelUp member history seed =
+
+charLeveling :: [Member] -> [String] ->  Word16 -> ([Member], [String], Word16)
+charLeveling members history seed =
+    let totXp = sum (map yieldedXp (filter (not . alive) (drop 4 members)))
+        n = to32 ((length . filter (\m -> alive m && (charID m /= 0x06))) (take 4 members))
+        divXp = totXp `div` n
+        modXp = totXp `mod` n
+        xp = divXp + (if modXp /= 0 then 0x000001 else 0x000000)
+        members' = map (\m -> if alive m && (charID m /= 0x06)
+                              then m { experience = experience m + xp }
+                              else m) (take 4 members)
+        (members'', history', seed') = levelUpLoop members' [] history seed xp in
+    debug ("[TRACE] charLeveling - xp: " ++ showHex24 xp ++ ", n: " ++ show n ++ ", totXp: " ++ showHex24 totXp)
+    (members'' ++ drop 4 members, history', seed')
+    where
+    levelUpLoop (member : ml) members history seed xp =
         let id = charID member
-            name' = name member
-            h = history ++ [printf "%s advanced to the next Level!" name']
-            (figC, speC, wisC, stgC, forC) = statUpMap ! id
-            s = skipRng 24 seed in
-        execCont $ callCC $ \exit -> do
-            s <- return $ nextRng s
-            let figI = statFunc figC s
-            s <- return $ nextRng s
-            let speI = statFunc speC s
-            s <- return $ nextRng s
-            let wisI = statFunc wisC s
-            s <- return $ nextRng s
-            let stgI = statFunc stgC s
-            s <- return $ nextRng s
-            let forI = statFunc forC s
-            member <- return $ member
-                { fight = incrStat (fight member) figI
-                , speed = incrStat (speed member) speI
-                , wisdom = incrStat (wisdom member) wisI
-                , strength = incrStat (strength member) stgI
-                , force = incrStat (force member) forI
-                , level = incrStat (level member) 0x01 }
-            (h, s) <- return $ textFunc (figI, speI, wisI, stgI, forI) h s
-            s <- return $ nextRng s
-            let hpI = hpFunc (strength member) (maxHp member) s
-            (h, s) <- return $ if hpI /= 0x00
-                               then (h ++ [printf "Maximum HP has increased by %d." hpI], skipRng 24 s)
-                               else (h, s)
-            member <- return $ member { maxHp = maxHp member + to16 hpI }
-            when (charID member == 0x03) (exit (member, h, s))
-            s <- return $ nextRng s
-            let ppI = ppFunc (force member) (maxPp member) s
-            (h, s) <- return $ if ppI /= 0x00
-                               then (h ++ [printf "Maximum PP has increased by %d." ppI], skipRng 24 s)
-                               else (h, s)
-            member <- return $ member { maxPp = maxPp member + to16 ppI }
-            return (member, h, s)
+            lvl = to32 (level member + 1)
+            neededXp = (lvl * lvl * (lvl + 1) * to32 (fromJust (levelUpMap !? id))) .>>. 8 in
+        debug ("[TRACE] charLeveling - id: " ++ showHex8 id)
+        debug ("[TRACE] charLeveling - xp: " ++ showHex24 (experience member))
+        debug ("[TRACE] charLeveling - lvl: " ++ showHex8 (level member)) $
+        if id /= 0x06 && alive member && level member < 99 && experience member >= neededXp
+        then let (member', history', seed') = levelUp member history seed in
+             debug ("[TRACE] charLeveling - neededXp: " ++ showHex24 neededXp)
+             levelUpLoop (member' : ml) members history' seed' xp
+        else levelUpLoop ml (members ++ [member]) history seed xp
+    levelUpLoop [] members history seed xp = (members, history, seed)
 
 battleWin :: [Member] -> [String] -> Word16 -> ([Member], [String], Word16)
 battleWin members history seed =
