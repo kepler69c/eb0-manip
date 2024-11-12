@@ -37,11 +37,12 @@ data Member = Member
     , statusMask :: Word8
     , resistance :: Word8
     , buff ::       Word8
-    , attackList :: [Word8]
-    , bag ::        [Word8]
     , level ::      Word8
     , experience :: Word32
     , yieldedXp ::  Word32
+    , attackList :: [Word8]
+    , bag ::        [Word8]
+    , learnedPsi :: [Word8]
     } deriving (Show, Eq)
 
 -- constants
@@ -96,13 +97,14 @@ emptyMember = Member
     , statusMask = 0x00
     , resistance = 0x00
     , buff =       0x00
-    , attackList = []
-    , bag =        []
     , level =      0x00
     , experience = 0x000000
-    , yieldedXp =  0x000000 }
+    , yieldedXp =  0x000000
+    , attackList = []
+    , bag =        []
+    , learnedPsi = [] }
 
--- stat growth constants (Fight, Speed, Wisdom, Strength, Force)
+-- stat growth constants map: charID -> (Fight, Speed, Wisdom, Strength, Force)
 statUpMap :: Map Word8 (Word8, Word8, Word8, Word8, Word8)
 statUpMap = fromList
     [ (0x01, (0x04, 0x04, 0x04, 0x04, 0x04))   -- Ninten
@@ -111,6 +113,26 @@ statUpMap = fromList
 
 levelUpMap :: Map Word8 Word8
 levelUpMap = fromList [ (0x01, 0xd6), (0x03, 0xc0) ]
+
+-- learned PSI list - (name, level required for Ninten) (not implemented for Ana)
+psiTable :: [(String, Word8)]
+psiTable =
+    [ ("           ", 0xff), ("Telepathy  ", 0x00), ("Teleport   ", 0xff), ("           ", 0xff)
+    , ("           ", 0xff), ("           ", 0xff), ("           ", 0xff), ("           ", 0xff)
+    , ("LifeUp a   ", 0x02), ("LifeUp B   ", 0x1c), ("LifeUp r   ", 0x20), ("LifeUp p   ", 0x25)
+    , ("LifeUp O   ", 0xff), ("           ", 0xff), ("           ", 0xff), ("           ", 0xff)
+    , ("Healing a  ", 0x04), ("Healing B  ", 0x0f), ("Healing r  ", 0x12), ("Healing p  ", 0x15)
+    , ("SuprHealing", 0x22), ("PSIShield a", 0x0c), ("PSIShield B", 0x1d), ("Powershield", 0x21)
+    , ("Brainshock ", 0xff), ("BrainCyclon", 0xff), ("           ", 0xff), ("Paralysis  ", 0xff)
+    , ("Darkness   ", 0xff), ("PSI-Magnet ", 0xff), ("Shield-Off ", 0xff), ("PSI-Block  ", 0xff)
+    , ("OffenseUp  ", 0x11), ("DefenseUp a", 0x06), ("DefenseUp B", 0x17), ("QuickUp    ", 0x0d)
+    , ("Def.Down a ", 0x08), ("Def.Down B ", 0x1a), ("4th-D Slip ", 0x0a), ("Hypnosis   ", 0x03)
+    , ("PK Freeze a", 0xff), ("PK Freeze B", 0xff), ("PK Freeze r", 0xff), ("PK Freeze O", 0xff)
+    , ("PK Fire a  ", 0xff), ("PK Fire B  ", 0xff), ("PK Fire r  ", 0xff), ("PK Fire O  ", 0xff)
+    , ("PK Beam a  ", 0xff), ("PK Beam B  ", 0xff), ("PK Beam r  ", 0xff), ("PK Beam O  ", 0xff)
+    , ("PK Thundera", 0xff), ("PK ThunderB", 0xff), ("PK Thunderr", 0xff), ("PK ThunderO", 0xff)
+    , ("PK Thundera", 0xff), ("PK ThunderB", 0xff), ("PK Thunderr", 0xff), ("           ", 0xff)
+    , ("           ", 0xff), ("           ", 0xff), ("           ", 0xff), ("           ", 0xff) ]
 
 -- NOTE: 0x92 is bomber, 0x9a is 4 starmen
 
@@ -190,11 +212,12 @@ showMember member =
         "  sta:  " ++ showHex8 (status member) ++ "\n" ++
         "  stm:  " ++ showHex8 (statusMask member) ++ "\n" ++
         "  res:  " ++ showHex8 (resistance member) ++ "\n" ++
-        "  atl:  " ++ "[ " ++ intercalate ", " (map showHex8 (attackList member)) ++ " ]\n" ++
-        "  bag:  " ++ "[ " ++ intercalate ", " (map showHex8 (bag member)) ++ " ]\n" ++
         "  lvl:  " ++ showHex8 (level member) ++ "\n" ++
         "  xp:   " ++ showHex24 (experience member) ++ "\n" ++
         "  yxp:  " ++ showHex24 (yieldedXp member) ++ "\n" ++
+        "  atl:  " ++ "[ " ++ intercalate ", " (map showHex8 (attackList member)) ++ " ]\n" ++
+        "  bag:  " ++ "[ " ++ intercalate ", " (map showHex8 (bag member)) ++ " ]\n" ++
+        "  psi:  " ++ "[ " ++ intercalate ", " (map showHex8 (learnedPsi member)) ++ " ]\n" ++
     "}"
 
 -- read from file functions
@@ -219,11 +242,12 @@ readMember entries =
         sta = to8 <$> (readHex =<< assq !? "status")
         stm = to8 <$> (readHex =<< assq !? "statusMask")
         res = to8 <$> (readHex =<< assq !? "resistance")
-        atl = map to8 <$> (mapM readHex . split ',' =<< assq !? "attackList")
-        bg' = map to8 <$> (mapM readHex . split ',' =<< assq !? "bag")
         lvl = to8 <$> (readHex =<< assq !? "level")
         xp' = to32 <$> (readHex =<< assq !? "experience")
-        yxp = to32 <$> (readHex =<< assq !? "yieldedXp") in
+        yxp = to32 <$> (readHex =<< assq !? "yieldedXp")
+        atl = map to8 <$> (mapM readHex . split ',' =<< assq !? "attackList")
+        bg' = map to8 <$> (mapM readHex . split ',' =<< assq !? "bag")
+        psi = map to8 <$> (mapM readHex . split ',' =<< assq !? "learnedPsi") in
     emptyMember { name = memberF "name" name
                 , charID = memberFOpt charID id'
                 , hp = memberF "hp" hp'
@@ -242,11 +266,12 @@ readMember entries =
                 , status = memberF "status" sta
                 , statusMask = memberF "statusMask" stm
                 , resistance = memberF "resistance" res
-                , attackList = memberFOpt attackList atl
-                , bag = memberFOpt bag bg'
                 , level = memberFOpt level lvl
                 , experience = memberFOpt experience xp'
-                , yieldedXp = memberFOpt yieldedXp yxp }
+                , yieldedXp = memberFOpt yieldedXp yxp
+                , attackList = memberFOpt attackList atl
+                , bag = memberFOpt bag bg'
+                , learnedPsi = memberFOpt learnedPsi psi }
     where list2tuple [x, y] = Just (x, y) 
           list2tuple _ = Nothing
           memberF _ (Just e) = e
@@ -1060,7 +1085,9 @@ levelUp member history seed =
         s <- return $ nextRng s
         let forI = statFunc forC s
         member <- return $ member
-            { fight = incrStat (fight member) figI
+            { attack = incrStat16 (attack member) (to16 figI)
+            , defense = incrStat16 (defense member) (to16 speI)
+            , fight = incrStat (fight member) figI
             , speed = incrStat (speed member) speI
             , wisdom = incrStat (wisdom member) wisI
             , strength = incrStat (strength member) stgI
@@ -1084,6 +1111,7 @@ levelUp member history seed =
     where
     statFunc const seed = (const + to8 (seed .>>. 14)) .>>. 1
     incrStat s x = if to16 s + to16 x > 0x00ff then 0xff else s + x
+    incrStat16 s x = if to32 s + to32 x > 0x0000ffff then 0xffff else s + x
     textFuncLoop ((i, txt) : l) h s =
         if i == 0x00 then textFuncLoop l h s else
         let s' = skipRng 24 s
@@ -1146,9 +1174,30 @@ charLeveling members history seed =
         else levelUpLoop ml (members ++ [member]) history seed xp
     levelUpLoop [] members history seed xp = (members, history, seed)
 
+learnNewPsi :: [Member] -> [String] -> Word16 -> ([Member], [String], Word16)
+learnNewPsi members history seed =
+    let i = fst $ fromJust $ uncons $ findIndices (\m -> charID m == 0x01) members
+        ninten = members !! i in
+    debug ("[TRACE] learnNewPsi - seed: " ++ showHex16 seed) $
+    let (ninten', history', seed') = foldl' (\(ninten, history, seed) (i, (psiName, reqLevel)) ->
+            let psiListI = (i `div` 8)
+                psiElemI = 0x80 .>>. (i `mod` 8)
+                elem = learnedPsi ninten !! psiListI in
+            if level ninten >= reqLevel && (elem .&. psiElemI) == 0x00 then
+                let seed' = nextRng seed in
+                if (seed' .&. 0xc000) == 0x0000 then
+                    let history' = history ++ [printf "%s learned a new PSI-power through battle!" (name ninten)]
+                        ninten' = ninten { learnedPsi = insertAt (learnedPsi ninten) psiListI (elem .|. psiElemI) } in
+                    debug ("[TRACE] learnNewPsi - Ninten learns " ++ psiName)
+                    (ninten', history', skipRng 24 seed')
+                else (ninten, history, seed')
+            else (ninten, history, seed)) (ninten, history, seed) (zip [0..] psiTable) in
+    (insertAt members i ninten', history', seed')
+
 battleWin :: [Member] -> [String] -> Word16 -> ([Member], [String], Word16)
 battleWin members history seed =
-    charLeveling members (history ++ ["YOU WIN!"]) (seed + 0)
+    let (m, h, s) = charLeveling members (history ++ ["YOU WIN!"]) seed in
+    learnNewPsi m h s
 
 -- battle :: [Member] -> Word16 -> Int -> (ActionRet, Int)
 -- battle members seed time =

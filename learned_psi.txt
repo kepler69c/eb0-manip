@@ -1,0 +1,64 @@
+bit 01 - (void)
+bit 02 - Telepathy
+bit 03 - Teleport
+bit 04 - LifeUp a (dupe)
+bit 05 - LifeUp a (dupe)
+bit 06 - LifeUp a (dupe)
+bit 07 - LifeUp a (dupe)
+bit 08 - LifeUp a (dupe)
+bit 09 - LifeUp a
+bit 10 - LifeUp B
+bit 11 - LifeUp r
+bit 12 - LifeUp p
+bit 13 - LifeUp O
+bit 14 - Healing a (dupe)
+bit 15 - Healing a (dupe)
+bit 16 - Healing a (dupe)
+bit 17 - Healing a
+bit 18 - Healing B
+bit 19 - Healing r
+bit 20 - Healing p
+bit 21 - SuprHealing
+bit 22 - PSIShield a
+bit 23 - PSIShield B
+bit 24 - Powershield
+bit 25 - BrainShock
+bit 26 - BrainCyclon
+bit 27 - Hypnosis (dupe)
+bit 28 - Paralysis
+bit 29 - Darkness
+bit 30 - PSI-Magnet
+bit 31 - Shield-Off
+bit 32 - PSI-Block
+bit 33 - OffenseUp
+bit 34 - DefenseUp a
+bit 35 - DefenseUp B
+bit 36 - QuickUp
+bit 37 - Def.Down a
+bit 38 - Def.Down B
+bit 39 - 4th-D Slip
+bit 40 - Hypnosis
+bit 41 - PK Freeze a
+bit 42 - PK Freeze B
+bit 43 - PK Freeze r
+bit 44 - PK Freeze O
+bit 45 - PK Fire a
+bit 46 - PK Fire B
+bit 47 - PK Fire r
+bit 48 - PK Fire O
+bit 49 - PK Beam a
+bit 50 - PK Beam B
+bit 51 - PK Beam r
+bit 52 - PK Beam O
+bit 53 - PK Thundera
+bit 54 - PK ThunderB
+bit 55 - PK Thunderr
+bit 56 - Faintd (bug)
+bit 57 - Faintd (bug)
+bit 58 - Faintd (bug)
+bit 59 - Faintd (bug)
+bit 60 - Faintd (bug)
+bit 61 - Faintd (bug)
+bit 62 - Faintd (bug)
+bit 63 - Faintd (bug)
+bit 64 - Faintd (bug)
