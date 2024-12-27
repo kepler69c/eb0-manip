@@ -16,7 +16,6 @@ data Range = All | Ally | Enemy deriving Show
 
 data TurnState = Win | Continue | Loss deriving (Show, Eq)
 
--- TODO: add maxHp... stats as well as exp (and lvl ?, can be computed from exp)
 data Member = Member
     { name ::       String
     , charID ::     Word8
@@ -167,13 +166,21 @@ insertAt l i e =
     let (l1, _ : l2) = splitAt i l in
     l1 ++ e : l2
 
-debugFlag = True
+firstJust f (x : l) =
+    case f x of
+    Just y -> Just y
+    Nothing -> firstJust f l
+firstJust f [] = Nothing
+
+debugFlag = False
 
 debug str a = if debugFlag then trace str a else a
 
 ror (a, c) = ((a .>>. 1) + (if c then 0x80 else 0x00), (a .&. 0x01) /= 0x00)
 
 execCont = flip runCont id
+
+label a = callCC $ \k -> let go b = k (go, b) in return (go, a)
 
 -- show functions
 showHex8 :: Word8 -> String
@@ -275,7 +282,7 @@ readMember entries =
     where list2tuple [x, y] = Just (x, y) 
           list2tuple _ = Nothing
           memberF _ (Just e) = e
-          memberF f _ = error ("field " ++ f ++ " is missing!")
+          memberF f _ = error ("readMember: field " ++ f ++ " is missing!")
           memberFOpt _ (Just e) = e
           memberFOpt f _ = f emptyMember
 
@@ -350,7 +357,7 @@ attackSelect members from seed skip =
         let seed' = nextRng seed
             m = members !! from
             attack = attackList m !! (fromIntegral (seed' .>>. 8) .&. 0b111) in
-        debug ("[TRACE] attackSelect - from: " ++ show from ++ ", attack: " ++ showHex8 attack) $
+        debug ("[TRACE] attackSelect - from: " ++ show from ++ ", attack: " ++ showHex8 attack ++ ", seed: " ++ showHex16 seed') $
         if attack == 0x53 || attack == 0x59
         then
             let m' = m { buff = buff m .|. 0x08 } in
@@ -359,7 +366,7 @@ attackSelect members from seed skip =
     -- always default attack during manips, selection takes 24 rng cycles
     else
       let skipFrames = if from == 0 then 24 * skip else 0 in
-      (0x01, members, skipRng (24 + skipFrames) seed)
+      (0x01, members, skipRng (48 + skipFrames) seed)
 
 selectTarget :: [Member] -> Int -> Range -> Word16 -> (Int, Word16)
 selectTarget members from range seed
@@ -426,13 +433,19 @@ critDamage :: [Member] -> Int -> Word16 -> (Word16, Word16)
 critDamage members from =
     valueRoll (attack (members !! from))
 
+findNinten :: [Member] -> (Int, Member)
+findNinten members =
+    let i = fst $ fromJust $ uncons $ findIndices (\m -> charID m == 0x01) members
+        ninten = members !! i in
+    (i, ninten)
+
 battleEnd :: [Member] -> TurnState
-battleEnd (m : ml)
-    | not (alive m) = Loss
-    | (not . any alive) (take 4 members) = Loss
+battleEnd members
+    | not (alive ninten) = Loss
     | (not . any alive) (drop 4 members) = Win
     | otherwise = Continue
-    where members = m : ml
+    where
+    (_, ninten) = findNinten members
 
 applyDamage :: Word16 -> [Member] -> Int -> Int -> Word16 -> (TurnState, [Member], [String], Word16)
 applyDamage dmg members from to s =
@@ -478,6 +491,8 @@ performStatus :: (Monad m) => [Member] -> Int -> Word16 ->
                  (ActionRet -> m ActionRet) ->
                  m ActionRet
 performStatus m from s exit
+    -- status mask 0x00
+    | statusMask (m !! from) == 0x00 = exit (Continue, m, [], s)
     -- dead
     | not (alive (m !! from)) = exit (Continue, m, [], s)
     -- stone
@@ -590,9 +605,16 @@ afNoTarget :: ActionFun
 afNoTarget (ts, m, h, s, am) _ =
     let fr = afFrom am
         to = afTo am in
-    (if not (alive (m !! fr)) || not (alive (m !! to))
-     then returnY
-     else returnN) (ts, m, h, s, am)
+    if not (alive (m !! fr)) || not (alive (m !! to))
+        then returnY (ts, m, h, s, am)
+        else returnN (ts, m, h, s, am)
+
+afNoCaster :: ActionFun
+afNoCaster (ts, m, h, s, am) _ =
+    let fr = afFrom am in
+    if not (alive (m !! fr))
+        then returnY (ts, m, h, s, am)
+        else returnN (ts, m, h, s, am)
 
 afGone :: ActionFun
 afGone (ts, m, h, s, am) exit =
@@ -766,12 +788,31 @@ afUsedBombText (ts, m, h, s, am) _ =
 afIncrTarg :: ActionFun
 afIncrTarg (ts, m, h, s, am) _ =
     let am' = am { afTo = afTo am + 1 } in
-    (if afTo am' == 4 || afTo am' == 8 then returnN
-     else returnY) (ts, m, h, s, am')
+    if afTo am' == 4 || afTo am' == 8
+        then returnN (ts, m, h, s, am')
+        else returnY (ts, m, h, s, am')
 
-afDrawsNear :: ActionFun
-afDrawsNear (ts, m, h, s, am) _ =
+afDrawsNearText :: ActionFun
+afDrawsNearText (ts, m, h, s, am) _ =
     returnY (ts, m, h ++ [printf "%s draws near!" (name (m !! afFrom am))], s, am)
+
+afRanAwayText :: ActionFun
+afRanAwayText (ts, m, h, s, am) _ =
+    returnY (ts, m, h ++ [printf "%s ran away!" (name (m !! afFrom am))], s, am)
+
+afCoinFlip :: ActionFun
+afCoinFlip (ts, m, h, s, am) _ =
+    let s' = nextRng s in
+    if s' .&. 0x8000 /= 0x0000
+        then returnY (ts, m, h, s', am)
+        else returnN (ts, m, h, s', am)
+
+afDidntWorkText :: ActionFun
+afDidntWorkText (ts, m, h, s, am) _ =
+    returnY (ts, m, h ++ ["...But it didn't work out."], s, am)
+
+afFled :: ActionFun
+afFled (ts, m, h, s, am) exit = exit (Win, m, h, s)
 
 -- attack DAG constants
 map01 = fromList
@@ -962,6 +1003,23 @@ afp46 = ActionParam
     , afPP = Nothing
     , afBuff = Nothing }
 
+map48 = fromList
+    [ (0, afRanAwayText)
+    , (1, afCoinFlip)
+    , (2, afDidntWorkText)
+    , (3, afNoCaster)
+    , (4, afFled)
+    , (5, afExit) ]
+dec48 = fromList
+    [ (0, Next 1)
+    , (1, NextYN (3, 2))
+    , (2, Next 5)
+    , (3, NextYN (5, 4)) ]
+afp48 = ActionParam
+    { afFixedDamage = Nothing
+    , afPP = Nothing
+    , afBuff = Nothing }
+
 map53 = fromList
     [ (0, afReadyText)
     , (1, afPlaceBuff)
@@ -975,7 +1033,7 @@ afp53 = ActionParam
     , afBuff = Just 0x08 }
 
 map5e = fromList
-    [ (0, afDrawsNear)
+    [ (0, afDrawsNearText)
     , (1, afExit) ]
 dec5e = fromList [(0, Next 1)]
 afp5e = ActionParam
@@ -1009,6 +1067,8 @@ performAttack m from s =
       0x38 -> runGraph (map38, dec38, afp38) m h s
       -- tripped and fell
       0x46 -> runGraph (map46, dec46, afp46) m h s
+      -- ran away
+      0x48 -> runGraph (map48, dec48, afp48) m h s
       -- ready for an attack
       0x53 -> runGraph (map53, dec53, afp53) m h s
       -- draws near
@@ -1027,8 +1087,9 @@ runMembersAttacks (ts, members, history, seed) =
                             let m = members' !! caster in
                             insertAt members' caster (m { attackSel = 0xff })
                         _ -> members' in
-            debug ("[TRACE] battleTurn - current caster: " ++ show caster ++ ", seed: " ++ showHex16 seed')
-        (ts, members'', history ++ history', seed'')) (Continue, members, [], seed) members where
+            debug ("[TRACE] runMembersAttacks - current caster: " ++ show caster ++ ", seed: " ++ showHex16 seed')
+        (ts, members'', history ++ history', seed'')) (Continue, members, [], seed) members
+    where
     runUntilStop scan =
         case find (\(ts, _, _, _) -> ts /= Continue) scan of
         Just x -> x
@@ -1044,7 +1105,7 @@ battleTurn members seed skip =
                 m2 = (members' !! i) { attackSel = id }
                 members'' = insertAt members' i m2
                 range = getAttackRange id in
-            debug ("[TRACE] battleTurn - selected attack: " ++ showHex8 id ++ ", range: " ++ show range ++ ", from: " ++ show i) $
+            debug ("[TRACE] battleTurn - selected attack: " ++ showHex8 id ++ ", range: " ++ show range ++ ", from: " ++ show i ++ ", seed': " ++ showHex16 seed' ++ ", seed: " ++ showHex16 seed) $
             case range of
             All ->
                 let m3 = m2 { attackTarg = i } in
@@ -1060,7 +1121,12 @@ battleTurn members seed skip =
 
 battleBegin :: [Member] -> Word16 -> ActionRet
 battleBegin members seed =
-    let members' = zipWith (\m a -> m { attackSel = a }) members [0x00, 0x00, 0x00, 0x00, 0x5e, 0x5e, 0x5e, 0x5e] in
+    let members' = zipWith (\m i ->
+          let attk | i < 4 = 0x00
+                   | alive m = 0x5e
+                   | otherwise = 0x00 in
+          m { attackSel = attk }) members [0..] in
+    debug ("[TRACE] battleBegin - members: \n" ++ intercalate "\n" (map showMember members'))
     runMembersAttacks (Continue, members', [], seed)
 
 -- nbAlive :: [Member] -> Int
@@ -1176,8 +1242,7 @@ charLeveling members history seed =
 
 learnNewPsi :: [Member] -> [String] -> Word16 -> ([Member], [String], Word16)
 learnNewPsi members history seed =
-    let i = fst $ fromJust $ uncons $ findIndices (\m -> charID m == 0x01) members
-        ninten = members !! i in
+    let (i, ninten) = findNinten members in
     debug ("[TRACE] learnNewPsi - seed: " ++ showHex16 seed) $
     let (ninten', history', seed') = foldl' (\(ninten, history, seed) (i, (psiName, reqLevel)) ->
             let psiListI = (i `div` 8)
@@ -1199,21 +1264,6 @@ battleWin members history seed =
     let (m, h, s) = charLeveling members (history ++ ["YOU WIN!"]) seed in
     learnNewPsi m h s
 
--- battle :: [Member] -> Word16 -> Int -> (ActionRet, Int)
--- battle members seed time =
---     let (ts, members', hist, seed') = battleBegin members seed
---         time' = time + sum (map length hist) + (length hist * 10) + 100 in
---     loop hist members' seed' time'
---     where
---     loop hist members seed time =
---         let (ts, members', hist', seed') = battleTurn members seed 0
---             -- improvable heuristic: text size time is added to turn time
---             time' = time + sum (map length hist') + (length hist' * 10) + 100
---             rhist = hist ++ hist' in
---         (case ts of
---          Continue -> loop rhist members' seed' time'
---          _ -> ((ts, members', rhist, seed'), time'))
-
 successfulBattle :: [Member] -> Word16 -> Int -> (ActionRet, Int, [Int])
 successfulBattle members seed time =
     let (ts, members', hist, seed') = battleBegin members seed
@@ -1222,7 +1272,7 @@ successfulBattle members seed time =
     where
     loop hist members seed time waits =
         let ((ts, members', hist', seed'), wait) = findBattleTurn members seed
-            -- TODO: compute real frames
+            -- TODO: compute real frames, this is an heuristic
             time' = time + sum (map length hist') + (length hist' * 10) + wait * 20 + 100
             rhist = hist ++ hist'
             rwaits = waits ++ [wait] in
@@ -1230,54 +1280,103 @@ successfulBattle members seed time =
          Continue -> loop rhist members' seed' time' rwaits
          Win ->
             let (members'', hist'', seed'') = battleWin members' rhist seed' in
-            -- TODO: recompute time
             ((ts, members'', hist'', seed''), time', rwaits)
          Loss -> error "successfulBattle: found a Loss during search")
-    succ i = i + 1
-    ints = iterate succ
-    firstJust f (x : l) =
-        case f x of
-        Just y -> Just y
-        Nothing -> firstJust f l
-    firstJust f [] = Nothing
     findBattleTurn members seed =
         fromJust $ firstJust (\i ->
             case battleTurn members seed i of
             (Loss, _, _, _) -> Nothing
-            ret -> Just (ret, i)) (ints 0)
+            ret -> Just (ret, i)) [0..]
 
--- getEncounters :: Word16 -> Word8 -> [(Word16, Bool)]
--- getEncounters seed threshold =
---     let rngs = iterate nextRng seed 
---         rh rng = (rng, to8 (rng .>>. 8) < threshold) in
---     map rh rngs
---  
--- getPresses :: Word16 -> Word8 -> Int -> [(Int, [(Word16, Bool)])]
--- getPresses seed threshold w =
---     let rngs = drop 1 $ iterate nextRng seed 
---         windows = map (\x -> take w $ getEncounters x threshold) rngs
---         analyze_win = map (\x -> (x, any snd x)) windows
---         applyPress ls =
---             let (l, r) = break snd ls in
---             l ++ [head r] ++ applyPress (drop 24 r)
---         applied = applyPress analyze_win 
---         splits = splitWhen snd applied
---         keep = map fst $ filter snd applied in 
---     zip (map (\x -> 1 + length x) splits) keep
--- 
--- getEnemy :: Word16 -> [Word8] -> (Word16, Word8)
--- getEnemy seed encounterTable =
---     let rngs = iterate nextRng seed in
---     head $ dropWhile (\(_, x) -> x == 0x00) $ map (\x ->
---         (x, encounterTable !! fromIntegral (to8 (x .>>. 12)))) rngs
+successfulLoidBattle :: [Member] -> Word16 -> Int -> (ActionRet, Int, [Int])
+successfulLoidBattle members seed time =
+    let (ts, members', hist, seed') = battleBegin members seed
+        time' = time + sum (map length hist) + (length hist * 10) + 100 in
+    loop hist members' seed' time' []
+    where
+    loop hist members seed time waits =
+        let ((ts, members', hist', seed'), wait) = findBattleTurn members seed
+            -- TODO: compute real frames, this is an heuristic
+            time' = time + sum (map length hist') + (length hist' * 10) + wait * 20 + 100
+            rhist = hist ++ hist'
+            rwaits = waits ++ [wait] in
+        (case ts of
+         Continue -> loop rhist members' seed' time' rwaits
+         Win ->
+            let (members'', hist'', seed'') = battleWin members' rhist seed' in
+            ((ts, members'', hist'', seed''), time', rwaits)
+         Loss -> error "successfulBattle: found a Loss during search")
+    findBattleTurn members seed =
+        fromJust $ firstJust (\i ->
+            case battleTurn members seed i of
+            (Loss, _, _, _) -> Nothing
+            ret ->
+                let (_, _ : loid : _, _, _) = ret in
+                if alive loid -- forcing Loid to be alive
+                  then Just (ret, i)
+                  else Nothing) [0..]
+
+getEncounters :: Word16 -> Word8 -> [(Word16, Bool)]
+getEncounters seed threshold =
+    let rngs = iterate nextRng seed
+        rh rng = (rng, to8 (rng .>>. 8) < threshold) in
+    map rh rngs
+
+prettyStepAnalysis :: Word16 -> Word8 -> Int -> Int -> ([String], [Int])
+prettyStepAnalysis seed threshold window steps =
+    let (_, s, b) = foldl' (\(s, d, p) _ ->
+          let field = getEncounters (nextRng s) threshold
+              wind = take window field
+              skip = any snd wind
+              (n,ext) = fromJust $ uncons $ take 80 $ drop (if skip then 23 else 0) field in
+          (fst n, d ++ [showHex16 (nextRng s) ++ ":[" ++ prettyMap wind ++ "]" ++ prettyMap (n:ext)], p ++ [skip])) (seed, [], []) [0..steps]
+        p = map ((+1) . length) (split True b) in
+    (s, p)
+    where prettyMap = map (\(_, b) -> if b then '#' else '|')
 
 main = do
-    members <- readBattleMembers "team.txt" "enc9a.txt"
-    ((_, members', h, s), t, w) <- return $ successfulBattle members 0x8792 0
+    members <- readBattleMembers "team.txt" "reindeer/enc47.txt"
+    let ((_, members', h, s), t, w) = successfulLoidBattle members 0x9fba 0
     putStrLn "h:"
     mapM_ putStrLn h
     putStrLn $ "seed: " ++ showHex16 s
-    --putStrLn "members':"
-    --mapM_ (putStrLn . showMember) members'
     putStrLn $ "time: " ++ show t
     putStrLn $ "waits: " ++ show w
+
+--main = do
+--    members <- readBattleMembers "team.txt" "enc_script_duncan.txt"
+--    let initSeeds = take 100 $ iterate nextRng 0xe7bc
+--    let finalSeeds = map (\s ->
+--          let ((_, members', h, seed), t, w) = successfulBattle members s 0 in
+--          seed) initSeeds
+--    putStrLn $ "finalSeeds:\n" ++ intercalate "\n  " (zipWith (\s1 s2 -> showHex16 s1 ++ " -> " ++ showHex16 s2) initSeeds finalSeeds)
+
+encTable :: [Word8]
+encTable = [ 0x1c, 0x1e, 0x20, 0x21, 0x30, 0x32, 0x33, 0x36,
+             0x37, 0x47, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 ]
+
+encountersFromSeed :: Word16 -> Word8 -> [(Word16, Maybe Word8)]
+encountersFromSeed seed threshold =
+  map (\s -> (s, encounter s)) (iterate nextRng seed)
+  where
+  encounter :: Word16 -> Maybe Word8
+  encounter s =
+    if to8 (s .>>. 8) < threshold then
+      firstJust (\s ->
+        let enc = (encTable !! fromIntegral (s .>>. 12)) in
+        if enc /= 0x00 then Just enc else Nothing) (tail (iterate nextRng s))
+    else Nothing
+
+flattenEFS :: Word16 -> Word8 -> [(Word16, Word8)]
+flattenEFS seed threshold =
+  mapMaybe (\(s, o) -> o >>= (\k -> Just (s, k))) (encountersFromSeed seed threshold)
+
+prettyFlatEFS = map (\(s, e) -> showHex16 s ++ " - " ++ showHex8 e)
+
+--main = do
+--  let (s, p) = prettyStepAnalysis 0x7f8a 0x0a 5 1000
+--  mapM_ putStrLn s
+--  print p
+
+--main = do
+--  mapM_ putStrLn (take 50 $ prettyFlatEFS $ flattenEFS 0x534d 0x0a)
