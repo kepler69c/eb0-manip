@@ -62,4 +62,6 @@ tp skip: 52578
 
 notes on manipped battles:
 - mansion red snake waits: [6, 0]
+  TODO: REDO MANIP NOOOO [4]
 - duncan stray dog waits: [0]
+- desert snake [0]
