@@ -134,7 +134,12 @@ psiTable =
     , ("PK Thundera", 0xff), ("PK ThunderB", 0xff), ("PK Thunderr", 0xff), ("           ", 0xff)
     , ("           ", 0xff), ("           ", 0xff), ("           ", 0xff), ("           ", 0xff) ]
 
--- NOTE: 0x92 is bomber, 0x9a is 4 starmen
+itemIDMap :: Map Word8 String
+itemIDMap = M.fromList [ (0x24, "Super Bomb"), (0x49, "PSI Stone")]
+
+encFileMap :: Map Word8 FilePath
+encFileMap = M.fromList [ (0x92, "mt_itoi/enc92.txt")
+                        , (0x9a, "mt_itoi/enc9a.txt") ]
 
 -- global utilities
 to8 :: (Integral a) => a -> Word8
@@ -280,7 +285,7 @@ readMember entries =
                 , attackList = memberFOpt attackList atl
                 , bag = memberFOpt bag bg'
                 , learnedPsi = memberFOpt learnedPsi psi }
-    where list2tuple [x, y] = Just (x, y) 
+    where list2tuple [x, y] = Just (x, y)
           list2tuple _ = Nothing
           memberF _ (Just e) = e
           memberF f _ = error ("readMember: field " ++ f ++ " is missing!")
@@ -294,16 +299,30 @@ readTeam teamFile = do
         teamList = map readMember teamStrList
     return $ take 4 $ teamList ++ repeat emptyMember
 
-readBattleMembers :: FilePath -> FilePath -> IO [Member]
-readBattleMembers teamFile enemyFile = do
-    teamStr <- readFile teamFile
+readLoot :: [String] -> (Word8, Word8)
+readLoot entries =
+    let assq = M.fromList $ map (fromJust . list2tuple . split ':') entries
+        yield = to8 <$> (readHex =<< assq M.!? "yieldedItem")
+        rate = to8 <$> (readHex =<< assq M.!? "lootRate") in
+    (getYield yield, fromMaybe 0x00 rate)
+    where list2tuple [x, y] = Just (x, y)
+          list2tuple _ = Nothing
+          getYield Nothing = error "field yieldedItem is missing!"
+          getYield (Just y) = y
+
+readEnemies :: FilePath -> IO ([Member], Word8, Word8)
+readEnemies enemyFile = do
     enemyStr <- readFile enemyFile
-    let teamStrList = split "" (lines teamStr)
-        enemyStrList = split "" (lines enemyStr)
-        teamList = map readMember teamStrList
-        enemyList = map readMember enemyStrList
-    return $ memberPack teamList ++ memberPack enemyList
-    where memberPack memberList = take 4 $ memberList ++ repeat emptyMember
+    let enemyStrList = split "" (lines enemyStr)
+        enemyList = map readMember (init enemyStrList)
+        (yield, rate) = readLoot (last enemyStrList)
+    return (take 4 (enemyList ++ repeat emptyMember), yield, rate)
+
+readBattleMembers :: FilePath -> FilePath -> IO ([Member], Word8, Word8)
+readBattleMembers teamFile enemyFile = do
+    team <- readTeam teamFile
+    (enemies, yield, rate) <- readEnemies enemyFile
+    return (team ++ enemies, yield, rate)
 
 readEncounterTable :: FilePath -> IO [Word8]
 readEncounterTable tableFile = do
@@ -1159,7 +1178,13 @@ levelUp member history seed =
         let stgI = statFunc stgC s
         s <- return $ nextRng s
         let forI = statFunc forC s
-        member <- return $ member
+        member <- debug ("[TRACE] levelUp - seed after increases: " ++ showHex16 s) $
+                  debug ("[TRACE] levelUp - FIGHT increase: " ++ show figI) $
+                  debug ("[TRACE] levelUp - SPEED increase: " ++ show speI) $
+                  debug ("[TRACE] levelUp - WISDOM increase: " ++ show wisI) $
+                  debug ("[TRACE] levelUp - STRENGTH increase: " ++ show stgI) $
+                  debug ("[TRACE] levelUp - FORCE increase: " ++ show forI) $
+                  return $ member
             { attack = incrStat16 (attack member) (to16 figI)
             , defense = incrStat16 (defense member) (to16 speI)
             , fight = incrStat (fight member) figI
@@ -1171,14 +1196,18 @@ levelUp member history seed =
         (h, s) <- return $ textFunc (figI, speI, wisI, stgI, forI) h s
         s <- return $ nextRng s
         let hpI = hpFunc (strength member) (maxHp member) s
-        (h, s) <- return $ if hpI /= 0x00
+        (h, s) <- debug ("[TRACE] levelUp - seed for HP increase: " ++ showHex16 s) $
+                  debug ("[TRACE] levelUp - HP increase: " ++ show hpI) $
+                  return $ if hpI /= 0x00
                            then (h ++ [printf "Maximum HP has increased by %d." hpI], skipRng 24 s)
                            else (h, s)
         member <- return $ member { maxHp = maxHp member + to16 hpI }
         when (charID member == 0x03) (exit (member, h, s))
         s <- return $ nextRng s
         let ppI = ppFunc (force member) (maxPp member) s
-        (h, s) <- return $ if ppI /= 0x00
+        (h, s) <- debug ("[TRACE] levelUp - seed for PP increase: " ++ showHex16 s) $
+                  debug ("[TRACE] levelUp - PP increase: " ++ show ppI) $
+                  return $ if ppI /= 0x00
                            then (h ++ [printf "Maximum PP has increased by %d." ppI], skipRng 24 s)
                            else (h, s)
         member <- return $ member { maxPp = maxPp member + to16 ppI }
@@ -1199,10 +1228,15 @@ levelUp member history seed =
         textFuncLoop l h s
     hpppf val stat seed =
         let n = val - stat
-            y | (val .&. 0xff00) == (stat .&. 0xff00) = min 0x10 (2 * to8 n)
-              | val < stat = 0x08
-              | otherwise = 0x01
+            y | val < stat = 0x02
+              | n .&. 0xff00 == 0x0000 = min 0x10 (2 * to8 n)
+              | otherwise = 0x10
             x = to8 (seed .>>. 11) in
+        debug ("[TRACE] hpppf - val: " ++ showHex16 val) $
+        debug ("[TRACE] hpppf - stat: " ++ showHex16 stat) $
+        debug ("[TRACE] hpppf - n: " ++ showHex16 n) $
+        debug ("[TRACE] hpppf - x: " ++ showHex8 x) $
+        debug ("[TRACE] hpppf - y: " ++ showHex8 y) $
         execCont $ do
             (x, c) <- return $ ror (x, False)
             (i, a) <- return (0x08, 0x00)
@@ -1221,6 +1255,28 @@ levelUp member history seed =
         let n = to16 ((for .>>. 1) + for) in
         hpppf n mpp seed
 
+learnNewPsi :: Member -> [String] -> Word16 -> (Member, [String], Word16)
+learnNewPsi member history seed =
+    if charID member `notElem` [ 0x01, 0x02 ] then (member, history, seed) else
+    let (member', history', seed') = foldl' (\(member, history, seed) (i, (psiName, reqLevel)) ->
+            let psiListI = (i `div` 8)
+                psiElemI = 0x80 .>>. (i `mod` 8)
+                elem = learnedPsi member !! psiListI in
+            if level member > reqLevel && (elem .&. psiElemI) == 0x00 then
+                debug ("[TRACE] learnNewPsi - PSI name: " ++ psiName) $
+                debug ("[TRACE] learnNewPsi - seed: " ++ showHex16 seed) $
+                debug ("[TRACE] learnNewPsi - level: " ++ show (level member)) $
+                debug ("[TRACE] learnNewPsi - required level: " ++ show reqLevel) $
+                let seed' = nextRng seed in
+                if (seed' .&. 0xc000) == 0x0000 then
+                    let history' = history ++ [printf "%s learned a new PSI-power through battle!" (name member)]
+                        member' = member { learnedPsi = insertAt (learnedPsi member) psiListI (elem .|. psiElemI) } in
+                    debug ("[TRACE] learnNewPsi - learning " ++ psiName)
+                    (member', history', skipRng 24 seed')
+                else (member, history, seed')
+            else (member, history, seed)) (member, history, seed) (zip [0..] psiTable) in
+    (member', history', seed')
+
 charLeveling :: [Member] -> [String] ->  Word16 -> ([Member], [String], Word16)
 charLeveling members history seed =
     let totXp = sum (map yieldedXp (filter (not . alive) (drop 4 members)))
@@ -1235,6 +1291,7 @@ charLeveling members history seed =
     debug ("[TRACE] charLeveling - xp: " ++ showHex24 xp ++ ", n: " ++ show n ++ ", totXp: " ++ showHex24 totXp)
     (members'' ++ drop 4 members, history', seed')
     where
+    levelUpLoop [] members history seed xp = (members, history, seed)
     levelUpLoop (member : ml) members history seed xp =
         let id = charID member
             lvl = to32 (level member + 1)
@@ -1246,36 +1303,43 @@ charLeveling members history seed =
         then let (member', history', seed') = levelUp member history seed in
              debug ("[TRACE] charLeveling - neededXp: " ++ showHex24 neededXp)
              levelUpLoop (member' : ml) members history' seed' xp
-        else levelUpLoop ml (members ++ [member]) history seed xp
-    levelUpLoop [] members history seed xp = (members, history, seed)
+        else let (member', history', seed') = learnNewPsi member history seed in
+             levelUpLoop ml (members ++ [member']) history' seed' xp
 
-learnNewPsi :: [Member] -> [String] -> Word16 -> ([Member], [String], Word16)
-learnNewPsi members history seed =
-    let (i, ninten) = findNinten members in
-    debug ("[TRACE] learnNewPsi - seed: " ++ showHex16 seed) $
-    let (ninten', history', seed') = foldl' (\(ninten, history, seed) (i, (psiName, reqLevel)) ->
-            let psiListI = (i `div` 8)
-                psiElemI = 0x80 .>>. (i `mod` 8)
-                elem = learnedPsi ninten !! psiListI in
-            if level ninten >= reqLevel && (elem .&. psiElemI) == 0x00 then
-                let seed' = nextRng seed in
-                if (seed' .&. 0xc000) == 0x0000 then
-                    let history' = history ++ [printf "%s learned a new PSI-power through battle!" (name ninten)]
-                        ninten' = ninten { learnedPsi = insertAt (learnedPsi ninten) psiListI (elem .|. psiElemI) } in
-                    debug ("[TRACE] learnNewPsi - Ninten learns " ++ psiName)
-                    (ninten', history', skipRng 24 seed')
-                else (ninten, history, seed')
-            else (ninten, history, seed)) (ninten, history, seed) (zip [0..] psiTable) in
-    (insertAt members i ninten', history', seed')
+lootItem :: [Member] -> Word8 -> Word8 -> [String] -> Word16 -> ([Member], [String], Word16)
+lootItem members 0x00 _ history seed = (members, history, seed)
+lootItem members yield rate history seed =
+    let seed' = nextRng seed in
+    debug ("[TRACE] lootItem - seed': " ++ showHex16 seed') $
+    debug ("[TRACE] lootItem - rate: " ++ showHex8 rate) $
+    if to8 (seed' .>>. 8) .&. rate == 0x00 then
+        case placeItemMember members yield of
+        Just members' -> (members', history ++ ["Picked up " ++ (itemIDMap M.! yield) ++ "!"], skipRng 24 seed')
+        _ -> (members, history, seed')
+    else (members, history, seed')
+    where
+    placeBagRec [] _ = []
+    placeBagRec (space : bag) item =
+        if space == 0x00 then item : bag else space : placeBagRec bag item
+    placeBag bag item =
+        let bag' = placeBagRec bag item in
+        if bag /= bag' then Just bag' else Nothing
+    placeItemMemberRec [] _ = []
+    placeItemMemberRec (m : members) item =
+        case placeBag (bag m) item of
+        Just bag' -> m { bag = bag' } : members
+        Nothing -> m : placeItemMemberRec members item
+    placeItemMember members item =
+        let members' = placeItemMemberRec members item in
+        if members /= members' then Just members' else Nothing
 
--- TODO: item ?
-battleWin :: [Member] -> [String] -> Word16 -> ([Member], [String], Word16)
-battleWin members history seed =
+battleWin :: [Member] -> Word8 -> Word8 -> [String] -> Word16 -> ([Member], [String], Word16)
+battleWin members yield rate history seed =
     let (m, h, s) = charLeveling members (history ++ ["YOU WIN!"]) seed in
-    learnNewPsi m h s
+    lootItem m yield rate h s
 
-successfulBattle :: [Member] -> Word16 -> (ActionRet, Int, [Int])
-successfulBattle members seed =
+successfulBattle :: [Member] -> Word8 -> Word8 -> Word16 -> (Int, ActionRet, [Int])
+successfulBattle members yield rate seed =
     let (ts, members', hist, seed') = battleBegin members seed
         time = sum (map length hist) + (length hist * 10) + 100 in
     loop hist members' seed' time []
@@ -1289,8 +1353,8 @@ successfulBattle members seed =
         (case ts of
          Continue -> loop rhist members' seed' time' rwaits
          Win ->
-            let (members'', hist'', seed'') = battleWin members' rhist seed' in
-            ((ts, members'', hist'', seed''), time', rwaits)
+            let (members'', hist'', seed'') = battleWin members' yield rate rhist seed' in
+            (time', (ts, members'', hist'', seed''), rwaits)
          Loss -> error "successfulBattle: found a Loss during search")
     findBattleTurn members seed =
         fromJust $ firstJust (\i ->
@@ -1298,9 +1362,10 @@ successfulBattle members seed =
             (Loss, _, _, _) -> Nothing
             ret -> Just (ret, i)) [0..]
 
-successfulFBattle :: [Member] -> Word16 -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int))
+successfulFBattle :: [Member] -> Word8 -> Word8 -> Word16
+                     -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int))
                      -> (Int, ActionRet, [Int])
-successfulFBattle members seed fbattle =
+successfulFBattle members yield rate seed fbattle =
     let (ts, members', hist, seed') = battleBegin members seed
         time = sum (map length hist) + (length hist * 10) + 100 in
     loop hist members' seed' time []
@@ -1311,42 +1376,43 @@ successfulFBattle members seed fbattle =
             time' = time + sum (map length hist') + (length hist' * 10) + wait * 20 + 100
             rhist = hist ++ hist'
             rwaits = waits ++ [wait] in
-        (case ts of
-         Continue ->
-             loop rhist members' seed' time' rwaits
-         Win ->
-            let (members'', hist'', seed'') = battleWin members' rhist seed' in
+        case ts of
+        Continue ->
+            loop rhist members' seed' time' rwaits
+        Win ->
+            let (members'', hist'', seed'') = battleWin members' yield rate rhist seed' in
             (time', (ts, members'', hist'', seed''), rwaits)
-         Loss -> error "successfulBattle: found a Loss during search")
+        Loss -> error "successfulBattle: found a Loss during search"
     findBattleTurn members seed fbattle =
         fromJust $ firstJust (fbattle members seed) [0..]
 
-performBattle :: [Member] -> Word16 -> [Int] -> (Int, ActionRet)
-performBattle members seed waits =
+performBattle :: [Member] -> Word8 -> Word8 -> Word16 -> [Int] -> (Int, ActionRet)
+performBattle members yield rate seed waits =
     let (ts, members', hist, seed') = battleBegin members seed
         time = sum (map length hist) + (length hist * 10) + 100 in
     loop hist members' seed' time waits
     where
-    loop _ _ _ _ [] = error "performBattle: list of waits is not complete"
+    loop hist members seed time [] = (time, (Continue, members, hist, seed))
     loop hist members seed time (wait : waits) =
         let (ts, members', hist', seed') = battleTurn members seed wait
             -- TODO: compute real frames, this is an heuristic
             time' = time + sum (map length hist') + (length hist' * 10) + wait * 20 + 100
             rhist = hist ++ hist' in
-        (case ts of
-         Continue ->
-             loop rhist members' seed' time' waits
-         Win ->
-            let (members'', hist'', seed'') = battleWin members' rhist seed' in
+        case ts of
+        Continue ->
+            loop rhist members' seed' time' waits
+        Loss ->
+            (time', (ts, members', hist', seed'))
+        Win ->
+            let (members'', hist'', seed'') = battleWin members' yield rate rhist seed' in
             (time', (ts, members'', hist'', seed''))
-         Loss -> error "performBattle: found a Loss during search")
 
-fastestBattle :: [Member] -> Word16 -> (Int, ActionRet, [Int])
-fastestBattle members seed =
-    let (_, timeout, _) = successfulBattle members seed
+fastestBattle :: [Member] -> Word8 -> Word8 -> Word16 -> (Int, ActionRet, [Int])
+fastestBattle members yield rate seed =
+    let (timeout, orgA, orgW) = successfulBattle members yield rate seed
         (ts, members', hist, seed') = battleBegin members seed
         time = sum (map length hist) + (length hist * 10) + 100 in
-    fromJust $ loop hist members' seed' time timeout []
+    fromMaybe (timeout, orgA, orgW) (loop hist members' seed' time timeout [])
     where
     loop hist members seed time timeout waits =
         let waits' = takeWhile (\wait -> time + 24 * wait <= timeout) [0..]
@@ -1356,27 +1422,29 @@ fastestBattle members seed =
                     rhist = hist ++ hist'
                     rwaits = waits ++ [wait] in
                 (case ts of
-                    Continue -> loop rhist members' seed' time' timeout rwaits
-                    Win ->
-                        let (members'', hist'', seed'') = battleWin members' rhist seed' in
-                        Just (time', (ts, members'', hist'', seed''), rwaits)
-                    Loss -> Nothing)) battles
+                 Continue -> loop rhist members' seed' time' timeout rwaits
+                 Win ->
+                     let (members'', hist'', seed'') = battleWin members' yield rate rhist seed' in
+                     Just (time', (ts, members'', hist'', seed''), rwaits)
+                 Loss -> Nothing)) battles
             filteredStates = filter (\(time, _, _) -> time <= timeout) states in
         case filteredStates of
-          [] -> Nothing
-          _ -> Just $ minimum filteredStates
+        [] -> Nothing
+        _ -> Just $ minimum filteredStates
     allBattleTurn members seed =
         map (\i ->
             case battleTurn members seed i of
             (Loss, _, _, _) -> Nothing
             ret -> Just (ret, i))
 
-fastestFBattle :: [Member] -> Word16 -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int)) -> (Int, ActionRet, [Int])
-fastestFBattle members seed fbattle =
-    let (timeout, _, _) = successfulFBattle members seed fbattle
+fastestFBattle :: [Member] -> Word8 -> Word8 -> Word16
+                  -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int))
+                  -> (Int, ActionRet, [Int])
+fastestFBattle members yield rate seed fbattle =
+    let (timeout, orgA, orgW) = successfulFBattle members yield rate seed fbattle
         (ts, members', hist, seed') = battleBegin members seed
         time = sum (map length hist) + (length hist * 10) + 100 in
-    fromJust $ loop hist members' seed' time timeout []
+    fromMaybe (timeout, orgA, orgW) (loop hist members' seed' time timeout [])
     where
     loop hist members seed time timeout waits =
         let waits' = takeWhile (\wait -> time + 24 * wait <= timeout) [0..]
@@ -1386,15 +1454,15 @@ fastestFBattle members seed fbattle =
                     rhist = hist ++ hist'
                     rwaits = waits ++ [wait] in
                 (case ts of
-                    Continue -> loop rhist members' seed' time' timeout rwaits
-                    Win ->
-                        let (members'', hist'', seed'') = battleWin members' rhist seed' in
-                        Just (time', (ts, members'', hist'', seed''), rwaits)
-                    Loss -> Nothing)) battles
-            filteredStates = filter (\(time, _, _) -> time <= timeout) states in
+                 Continue -> loop rhist members' seed' time' timeout rwaits
+                 Win ->
+                     let (members'', hist'', seed'') = battleWin members' yield rate rhist seed' in
+                     Just (time', (ts, members'', hist'', seed''), rwaits)
+                 Loss -> Nothing)) battles
+            filteredStates = filter (\(time, _, _) -> time < timeout) states in
         case filteredStates of
-          [] -> Nothing
-          _ -> Just $ minimum filteredStates
+        [] -> Nothing
+        _ -> Just $ minimum filteredStates
     allBattleTurn members seed = map (fbattle members seed)
 
 getEncounters :: Word16 -> Word8 -> [(Word16, Bool)]
@@ -1410,35 +1478,19 @@ prettyStepAnalysis seed threshold window steps =
               wind = take window field
               skip = any snd wind
               (n,ext) = fromJust $ uncons $ take 80 $ drop (if skip then 23 else 0) field in
-          (fst n, d ++ [showHex16 (nextRng s) ++ ":[" ++ prettyMap wind ++ "]" ++ prettyMap (n:ext)], p ++ [skip])) (seed, [], []) [0..steps]
+          (fst n, d ++ [showHex16 (nextRng s) ++ ":[" ++ prettyMap wind ++ "]" ++ prettyMap (n:ext)], p ++ [skip]))
+          (seed, [], []) [0..steps]
         p = map ((+1) . length) (split True b) in
     (s, p)
     where prettyMap = map (\(_, b) -> if b then '#' else '|')
 
 --main = do
---    members <- readBattleMembers "team.txt" "mt_itoi/enc9a.txt"
---    let (t, (_, members', h, s), w) = fastestBattle members 0x8f9e
+--    (members, yield, rate) <- readBattleMembers "team.txt" "mt_itoi/enc9a.txt"
+--    let (t, (_, members', h, s)) = performBattle members yield rate 0x8f9e [3, 1]
 --    putStrLn "h:"
 --    mapM_ putStrLn h
 --    putStrLn $ "seed: " ++ showHex16 s
 --    putStrLn $ "time: " ++ show t
---    putStrLn $ "waits: " ++ show w
-
---main = do
---    members <- readBattleMembers "team.txt" "mt_itoi/enc9a.txt"
---    let (t, (_, members', h, s)) = performBattle members 0x8f9e [4, 0, 0, 0]
---    putStrLn "h:"
---    mapM_ putStrLn h
---    putStrLn $ "seed: " ++ showHex16 s
---    putStrLn $ "time: " ++ show t
-
---main = do
---    members <- readBattleMembers "team.txt" "enc_script_duncan.txt"
---    let initSeeds = take 100 $ iterate nextRng 0xe7bc
---    let finalSeeds = map (\s ->
---          let ((_, members', h, seed), t, w) = successfulBattle members s 0 in
---          seed) initSeeds
---    putStrLn $ "finalSeeds:\n" ++ intercalate "\n  " (zipWith (\s1 s2 -> showHex16 s1 ++ " -> " ++ showHex16 s2) initSeeds finalSeeds)
 
 encountersFromSeed :: Word16 -> Word8 -> [Word8] -> [(Word16, Maybe (Word8, Word16))]
 encountersFromSeed seed threshold encTable =
@@ -1469,27 +1521,31 @@ prettyFlatEFS = map (\(s, (e, s')) -> showHex16 s ++ " - (" ++ showHex8 e ++ ", 
 --     encTable <- readEncounterTable "maps/map35.txt"
 --     mapM_ putStrLn (take 1500 $ prettyEFS $ encountersFromSeed 0x07fa 0x0a encTable)
 
-encFileMap :: Map Word8 FilePath
-encFileMap = M.fromList [ (0x92, "mt_itoi/enc92.txt")
-                        , (0x9a, "mt_itoi/enc9a.txt") ]
-
 automateLevels :: [(Word8, Int)] -> [Member] -> Word16 -> Word8 -> [Word8]
                   -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int))
                   -> IO ([Member], [[String]], Word16)
 automateLevels [] team seed _ _ _ = return (team, [], seed)
 automateLevels desiredBattles team seed threshold encTable fbattle = do
-    let encs = map snd $ encountersFromSeed seed threshold encTable
-        (Just (enc, seed'), frames) = head $ filter (encFindFunc desiredBattles) (zip encs [0..])
-    enemies <- readTeam (encFileMap M.! enc)
-    let (_, (_, members', h, seed''), w) = fastestFBattle (team ++ enemies) seed' fbattle
-    print (showHex16 seed' ++ ", " ++ showHex8 enc ++ ", " ++ show frames)
-    print (show w)
+    let encs = encountersFromSeed seed threshold encTable
+        ((arrivalSeed, Just (enc, seed')), frames) = head $ filter (encFindFunc desiredBattles) (zip encs [0..])
+    (enemies, yield, rate) <- readEnemies (encFileMap M.! enc)
+    let (_, (_, members', h, seed''), w) = fastestFBattle (team ++ enemies) yield rate seed' fbattle
+    putStrLn ("enc. infos: " ++ showHex16 arrivalSeed ++ ", " ++ showHex16 seed' ++ ", " ++
+              showHex8 enc ++ ", " ++ show frames ++ ", " ++ show w ++ ", " ++ show desiredBattles ++ ", " ++
+              showHex8 yield ++ ", " ++ showHex8 rate)
     putStrLn "h:"
     mapM_ putStrLn h
     putStrLn ("s: " ++ showHex16 seed'')
-    return ([], [], 0x0000)
+    automateLevels (consumeBattles enc desiredBattles) (take 4 members') seed'' threshold encTable fbattle
     where
-    encFindFunc desiredBattles (enc, _) = (fst <$> enc) `elem` map (Just . fst) desiredBattles
+    encFindFunc desiredBattles ((_, enc), _) = (fst <$> enc) `elem` map (Just . fst) desiredBattles
+    reduceBattles _ [] = []
+    reduceBattles enc ((e, c) : desiredBattles) =
+        (if enc == e then (e, c - 1) else (e, c)) : reduceBattles enc desiredBattles
+    consumeBattles enc desiredBattles =
+        filter ((/= 0) . snd) (reduceBattles enc desiredBattles)
+
+-- TODO: add a fwin function for battle searches
 
 main = do
     encTable <- readEncounterTable "maps/map35.txt"
@@ -1497,10 +1553,6 @@ main = do
     let fbattle members seed i =
             case battleTurn members seed i of
             (Loss, _, _, _) -> Nothing
-            ret ->
-                let (_, m, _, _) = ret
-                    items = concatMap bag m in
-                if (0x00 `notElem` items && 0x24 `notElem` items) || (name (members !! 4) == "Star Miner" && 0x24 `notElem` items) -- Super Bomb after Star Miner, also guarantees to have enough space for Super Bomb
-                    then Nothing
-                    else Just (ret, i)
-    automateLevels [(0x92, 1), (0x9a, 10)] team 0xd111 0x0a encTable fbattle
+            ret -> Just (ret, i)
+    (t, _, _) <- automateLevels [(0x92, 1), (0x9a, 10)] team 0xd111 0x0a encTable fbattle
+    print t
