@@ -6,11 +6,10 @@ import Text.Printf
 import Data.Maybe
 import Control.Monad.Cont
 import Control.Monad.Identity
-import Control.Monad (when, foldM)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Control.Exception (assert)
-import Debug.Trace (trace)
+import Debug.Trace
+import Data.Functor
 
 -- types
 data Range = All | Ally | Enemy deriving Show
@@ -329,7 +328,7 @@ readEncounterTable tableFile = do
     tableContent <- readFile tableFile
     let tableStr : _ = lines tableContent
         ret = map to8 (fromJust (mapM readHex (split ' ' tableStr)))
-    assert (length ret == 16) $ return ret
+    return ret
 
 -- RNG functions
 nextRng :: Word16 -> Word16
@@ -461,19 +460,13 @@ critDamage :: [Member] -> Int -> Word16 -> (Word16, Word16)
 critDamage members from =
     valueRoll (attack (members !! from))
 
-findNinten :: [Member] -> (Int, Member)
-findNinten members =
-    let i = fst $ fromJust $ uncons $ findIndices (\m -> charID m == 0x01) members
-        ninten = members !! i in
-    (i, ninten)
-
 battleEnd :: [Member] -> TurnState
 battleEnd members
-    | not (alive ninten) = Loss
-    | (not . any alive) (drop 4 members) = Win
+    | not (any alive (mustLive $ take 4 members)) = Loss
+    | not (any alive (drop 4 members)) = Win
     | otherwise = Continue
     where
-    (_, ninten) = findNinten members
+    mustLive = filter ((`elem` [ 0x01, 0x03 ]) . charID)
 
 applyDamage :: Word16 -> [Member] -> Int -> Int -> Word16 -> (TurnState, [Member], [String], Word16)
 applyDamage dmg members from to s =
@@ -1364,11 +1357,12 @@ successfulBattle members yield rate seed =
 
 successfulFBattle :: [Member] -> Word8 -> Word8 -> Word16
                      -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int))
+                     -> ((Int, ActionRet, [Int]) -> Maybe (Int, ActionRet, [Int]))
                      -> (Int, ActionRet, [Int])
-successfulFBattle members yield rate seed fbattle =
+successfulFBattle members yield rate seed fbattle fwin =
     let (ts, members', hist, seed') = battleBegin members seed
         time = sum (map length hist) + (length hist * 10) + 100 in
-    loop hist members' seed' time []
+    findWin hist members' seed' time
     where
     loop hist members seed time waits =
         let ((ts, members', hist', seed'), wait) = findBattleTurn members seed fbattle
@@ -1377,35 +1371,18 @@ successfulFBattle members yield rate seed fbattle =
             rhist = hist ++ hist'
             rwaits = waits ++ [wait] in
         case ts of
-        Continue ->
-            loop rhist members' seed' time' rwaits
+        Continue -> loop rhist members' seed' time' rwaits
         Win ->
             let (members'', hist'', seed'') = battleWin members' yield rate rhist seed' in
             (time', (ts, members'', hist'', seed''), rwaits)
         Loss -> error "successfulBattle: found a Loss during search"
     findBattleTurn members seed fbattle =
         fromJust $ firstJust (fbattle members seed) [0..]
-
-performBattle :: [Member] -> Word8 -> Word8 -> Word16 -> [Int] -> (Int, ActionRet)
-performBattle members yield rate seed waits =
-    let (ts, members', hist, seed') = battleBegin members seed
-        time = sum (map length hist) + (length hist * 10) + 100 in
-    loop hist members' seed' time waits
-    where
-    loop hist members seed time [] = (time, (Continue, members, hist, seed))
-    loop hist members seed time (wait : waits) =
-        let (ts, members', hist', seed') = battleTurn members seed wait
-            -- TODO: compute real frames, this is an heuristic
-            time' = time + sum (map length hist') + (length hist' * 10) + wait * 20 + 100
-            rhist = hist ++ hist' in
-        case ts of
-        Continue ->
-            loop rhist members' seed' time' waits
-        Loss ->
-            (time', (ts, members', hist', seed'))
-        Win ->
-            let (members'', hist'', seed'') = battleWin members' yield rate rhist seed' in
-            (time', (ts, members'', hist'', seed''))
+    findWin hist members seed time =
+        let ((time', ar, waits), i) =
+              fromJust $ firstJust (\i ->
+                  fwin (loop hist members (skipRng (i * 24) seed) time []) <&> (, i)) [0..] in
+        (time', ar, (head waits + i) : tail waits)
 
 fastestBattle :: [Member] -> Word8 -> Word8 -> Word16 -> (Int, ActionRet, [Int])
 fastestBattle members yield rate seed =
@@ -1439,9 +1416,10 @@ fastestBattle members yield rate seed =
 
 fastestFBattle :: [Member] -> Word8 -> Word8 -> Word16
                   -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int))
+                  -> ((Int, ActionRet, [Int]) -> Maybe (Int, ActionRet, [Int]))
                   -> (Int, ActionRet, [Int])
-fastestFBattle members yield rate seed fbattle =
-    let (timeout, orgA, orgW) = successfulFBattle members yield rate seed fbattle
+fastestFBattle members yield rate seed fbattle fwin =
+    let (timeout, orgA, orgW) = successfulFBattle members yield rate seed fbattle fwin
         (ts, members', hist, seed') = battleBegin members seed
         time = sum (map length hist) + (length hist * 10) + 100 in
     fromMaybe (timeout, orgA, orgW) (loop hist members' seed' time timeout [])
@@ -1457,13 +1435,32 @@ fastestFBattle members yield rate seed fbattle =
                  Continue -> loop rhist members' seed' time' timeout rwaits
                  Win ->
                      let (members'', hist'', seed'') = battleWin members' yield rate rhist seed' in
-                     Just (time', (ts, members'', hist'', seed''), rwaits)
+                     fwin (time', (ts, members'', hist'', seed''), rwaits)
                  Loss -> Nothing)) battles
             filteredStates = filter (\(time, _, _) -> time < timeout) states in
         case filteredStates of
         [] -> Nothing
         _ -> Just $ minimum filteredStates
     allBattleTurn members seed = map (fbattle members seed)
+
+performBattle :: [Member] -> Word8 -> Word8 -> Word16 -> [Int] -> (Int, ActionRet)
+performBattle members yield rate seed waits =
+    let (ts, members', hist, seed') = battleBegin members seed
+        time = sum (map length hist) + (length hist * 10) + 100 in
+    loop hist members' seed' time waits
+    where
+    loop hist members seed time [] = (time, (Continue, members, hist, seed))
+    loop hist members seed time (wait : waits) =
+        let (ts, members', hist', seed') = battleTurn members seed wait
+            -- TODO: compute real frames, this is an heuristic
+            time' = time + sum (map length hist') + (length hist' * 10) + wait * 20 + 100
+            rhist = hist ++ hist' in
+        case ts of
+        Continue -> loop rhist members' seed' time' waits
+        Loss -> (time', (ts, members', hist', seed'))
+        Win ->
+            let (members'', hist'', seed'') = battleWin members' yield rate rhist seed' in
+            (time', (ts, members'', hist'', seed''))
 
 getEncounters :: Word16 -> Word8 -> [(Word16, Bool)]
 getEncounters seed threshold =
@@ -1483,14 +1480,6 @@ prettyStepAnalysis seed threshold window steps =
         p = map ((+1) . length) (split True b) in
     (s, p)
     where prettyMap = map (\(_, b) -> if b then '#' else '|')
-
---main = do
---    (members, yield, rate) <- readBattleMembers "team.txt" "mt_itoi/enc9a.txt"
---    let (t, (_, members', h, s)) = performBattle members yield rate 0x8f9e [3, 1]
---    putStrLn "h:"
---    mapM_ putStrLn h
---    putStrLn $ "seed: " ++ showHex16 s
---    putStrLn $ "time: " ++ show t
 
 encountersFromSeed :: Word16 -> Word8 -> [Word8] -> [(Word16, Maybe (Word8, Word16))]
 encountersFromSeed seed threshold encTable =
@@ -1512,6 +1501,42 @@ flattenEFS seed threshold encTable =
 
 prettyFlatEFS = map (\(s, (e, s')) -> showHex16 s ++ " - (" ++ showHex8 e ++ ", " ++ showHex16 s' ++ ")")
 
+encounterLevels = [ 0x60, 0x20, 0x15, 0x10, 0x0d, 0x0a, 0x08, 0x06, 0x05 ]
+
+automateLevels :: [(Word8, Int)] -> [Member] -> Word16 -> Word8 -> [Word8]
+                  -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int))
+                  -> ((Int, ActionRet, [Int]) -> Maybe (Int, ActionRet, [Int]))
+                  -> IO ([Member], [[String]], Word16)
+automateLevels [] team seed _ _ _ _ = return (team, [], seed)
+automateLevels desiredBattles team seed threshold encTable fbattle fwin = do
+    let encs = encountersFromSeed seed threshold encTable
+        ((arrivalSeed, Just (enc, seed')), frames) = head $ filter (encFindFunc desiredBattles) (zip encs [0..])
+    (enemies, yield, rate) <- readEnemies (encFileMap M.! enc)
+    let (_, (_, members', h, seed''), w) = fastestFBattle (team ++ enemies) yield rate seed' fbattle fwin
+    --let (_, (_, members', h, seed''), w) = successfulFBattle (team ++ enemies) yield rate seed' fbattle fwin
+    putStrLn ("enc. infos: " ++ showHex16 arrivalSeed ++ ", " ++ showHex16 seed' ++ ", " ++
+              showHex8 enc ++ ", " ++ show frames ++ ", " ++ show w ++ ", " ++ show desiredBattles ++ ", " ++
+              showHex8 yield ++ ", " ++ showHex8 rate)
+    putStrLn "h:"
+    mapM_ putStrLn h
+    putStrLn ("s: " ++ showHex16 seed'')
+    automateLevels (consumeBattles enc desiredBattles) (take 4 members') seed'' threshold encTable fbattle fwin
+    where
+    encFindFunc desiredBattles ((_, enc), _) = (fst <$> enc) `elem` map (Just . fst) desiredBattles
+    reduceBattles _ [] = []
+    reduceBattles enc ((e, c) : desiredBattles) =
+        (if enc == e then (e, c - 1) else (e, c)) : reduceBattles enc desiredBattles
+    consumeBattles enc desiredBattles =
+        filter ((/= 0) . snd) (reduceBattles enc desiredBattles)
+
+--main = do
+--    (members, yield, rate) <- readBattleMembers "team.txt" "mt_itoi/enc9a.txt"
+--    let (t, (_, members', h, s)) = performBattle members yield rate 0x8f9e [3, 1]
+--    putStrLn "h:"
+--    mapM_ putStrLn h
+--    putStrLn $ "seed: " ++ showHex16 s
+--    putStrLn $ "time: " ++ show t
+
 --main = do
 --    let (s, p) = prettyStepAnalysis 0x7f8a 0x0a 5 1000
 --    mapM_ putStrLn s
@@ -1521,31 +1546,7 @@ prettyFlatEFS = map (\(s, (e, s')) -> showHex16 s ++ " - (" ++ showHex8 e ++ ", 
 --     encTable <- readEncounterTable "maps/map35.txt"
 --     mapM_ putStrLn (take 1500 $ prettyEFS $ encountersFromSeed 0x07fa 0x0a encTable)
 
-automateLevels :: [(Word8, Int)] -> [Member] -> Word16 -> Word8 -> [Word8]
-                  -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int))
-                  -> IO ([Member], [[String]], Word16)
-automateLevels [] team seed _ _ _ = return (team, [], seed)
-automateLevels desiredBattles team seed threshold encTable fbattle = do
-    let encs = encountersFromSeed seed threshold encTable
-        ((arrivalSeed, Just (enc, seed')), frames) = head $ filter (encFindFunc desiredBattles) (zip encs [0..])
-    (enemies, yield, rate) <- readEnemies (encFileMap M.! enc)
-    let (_, (_, members', h, seed''), w) = fastestFBattle (team ++ enemies) yield rate seed' fbattle
-    putStrLn ("enc. infos: " ++ showHex16 arrivalSeed ++ ", " ++ showHex16 seed' ++ ", " ++
-              showHex8 enc ++ ", " ++ show frames ++ ", " ++ show w ++ ", " ++ show desiredBattles ++ ", " ++
-              showHex8 yield ++ ", " ++ showHex8 rate)
-    putStrLn "h:"
-    mapM_ putStrLn h
-    putStrLn ("s: " ++ showHex16 seed'')
-    automateLevels (consumeBattles enc desiredBattles) (take 4 members') seed'' threshold encTable fbattle
-    where
-    encFindFunc desiredBattles ((_, enc), _) = (fst <$> enc) `elem` map (Just . fst) desiredBattles
-    reduceBattles _ [] = []
-    reduceBattles enc ((e, c) : desiredBattles) =
-        (if enc == e then (e, c - 1) else (e, c)) : reduceBattles enc desiredBattles
-    consumeBattles enc desiredBattles =
-        filter ((/= 0) . snd) (reduceBattles enc desiredBattles)
-
--- TODO: add a fwin function for battle searches
+-- TODO: support encounter levels
 
 main = do
     encTable <- readEncounterTable "maps/map35.txt"
@@ -1553,6 +1554,17 @@ main = do
     let fbattle members seed i =
             case battleTurn members seed i of
             (Loss, _, _, _) -> Nothing
-            ret -> Just (ret, i)
-    (t, _, _) <- automateLevels [(0x92, 1), (0x9a, 10)] team 0xd111 0x0a encTable fbattle
+            ret ->
+                let (_, ninten : _, _, _) = ret in
+                if alive ninten
+                then Just (ret, i)
+                else Nothing
+        fwin (time, (ts, members, hist, seed), waits) =
+            let items = concatMap bag members
+                starMiner = members !! 4 in
+            if (0x00 `elem` items || 0x24 `elem` items) && 
+               (name starMiner /= "Star Miner" || (name starMiner == "Star Miner" && 0x24 `elem` items))
+            then Just (time, (ts, members, hist, seed), waits)
+            else Nothing
+    (t, _, _) <- automateLevels [(0x92, 1), (0x9a, 10)] team 0xd111 0x0a encTable fbattle fwin
     print t
