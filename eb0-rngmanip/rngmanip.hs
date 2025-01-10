@@ -140,6 +140,8 @@ encFileMap :: Map Word8 FilePath
 encFileMap = M.fromList [ (0x92, "mt_itoi/enc92.txt")
                         , (0x9a, "mt_itoi/enc9a.txt") ]
 
+encounterThresholds = [ 0x60, 0x20, 0x15, 0x10, 0x0d, 0x0a, 0x08, 0x06, 0x05 ]
+
 -- global utilities
 to8 :: (Integral a) => a -> Word8
 to8 = fromIntegral
@@ -1501,26 +1503,29 @@ flattenEFS seed threshold encTable =
 
 prettyFlatEFS = map (\(s, (e, s')) -> showHex16 s ++ " - (" ++ showHex8 e ++ ", " ++ showHex16 s' ++ ")")
 
-encounterLevels = [ 0x60, 0x20, 0x15, 0x10, 0x0d, 0x0a, 0x08, 0x06, 0x05 ]
-
-automateLevels :: [(Word8, Int)] -> [Member] -> Word16 -> Word8 -> [Word8]
+automateLevels :: [(Word8, Int)] -> [Member] -> Word16 -> (Int, Int) -> [Word8]
                   -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int))
                   -> ((Int, ActionRet, [Int]) -> Maybe (Int, ActionRet, [Int]))
                   -> IO ([Member], [[String]], Word16)
 automateLevels [] team seed _ _ _ _ = return (team, [], seed)
-automateLevels desiredBattles team seed threshold encTable fbattle fwin = do
-    let encs = encountersFromSeed seed threshold encTable
+automateLevels desiredBattles team seed (encThrPointer, encLevel) encTable fbattle fwin = do
+    let encs = encountersFromSeed seed (encounterThresholds !! (encThrPointer + encLevel)) encTable
         ((arrivalSeed, Just (enc, seed')), frames) = head $ filter (encFindFunc desiredBattles) (zip encs [0..])
     (enemies, yield, rate) <- readEnemies (encFileMap M.! enc)
     let (_, (_, members', h, seed''), w) = fastestFBattle (team ++ enemies) yield rate seed' fbattle fwin
-    --let (_, (_, members', h, seed''), w) = successfulFBattle (team ++ enemies) yield rate seed' fbattle fwin
+        encLevel' = min (encLevel + 1) 2
+        desiredBattles' = consumeBattles enc desiredBattles
+        team' = take 4 members'
+
     putStrLn ("enc. infos: " ++ showHex16 arrivalSeed ++ ", " ++ showHex16 seed' ++ ", " ++
               showHex8 enc ++ ", " ++ show frames ++ ", " ++ show w ++ ", " ++ show desiredBattles ++ ", " ++
               showHex8 yield ++ ", " ++ showHex8 rate)
+    putStrLn ("threshold: " ++ showHex8 (encounterThresholds !! (encThrPointer + encLevel)))
     putStrLn "h:"
     mapM_ putStrLn h
     putStrLn ("s: " ++ showHex16 seed'')
-    automateLevels (consumeBattles enc desiredBattles) (take 4 members') seed'' threshold encTable fbattle fwin
+
+    automateLevels desiredBattles' team' seed'' (encThrPointer, encLevel') encTable fbattle fwin
     where
     encFindFunc desiredBattles ((_, enc), _) = (fst <$> enc) `elem` map (Just . fst) desiredBattles
     reduceBattles _ [] = []
@@ -1562,9 +1567,9 @@ main = do
         fwin (time, (ts, members, hist, seed), waits) =
             let items = concatMap bag members
                 starMiner = members !! 4 in
-            if (0x00 `elem` items || 0x24 `elem` items) && 
+            if (0x00 `elem` items || 0x24 `elem` items) &&
                (name starMiner /= "Star Miner" || (name starMiner == "Star Miner" && 0x24 `elem` items))
             then Just (time, (ts, members, hist, seed), waits)
             else Nothing
-    (t, _, _) <- automateLevels [(0x92, 1), (0x9a, 10)] team 0xd111 0x0a encTable fbattle fwin
+    (t, _, _) <- automateLevels [(0x92, 1), (0x9a, 10)] team 0xd111 (5, 0) encTable fbattle fwin
     print t
