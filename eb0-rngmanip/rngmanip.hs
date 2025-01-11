@@ -1503,36 +1503,72 @@ flattenEFS seed threshold encTable =
 
 prettyFlatEFS = map (\(s, (e, s')) -> showHex16 s ++ " - (" ++ showHex8 e ++ ", " ++ showHex16 s' ++ ")")
 
+-- TODO: open all files before doing anything else (could remove the IO monad)
+
 automateLevels :: [(Word8, Int)] -> [Member] -> Word16 -> (Int, Int) -> [Word8]
                   -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int))
                   -> ((Int, ActionRet, [Int]) -> Maybe (Int, ActionRet, [Int]))
-                  -> IO ([Member], [[String]], Word16)
-automateLevels [] team seed _ _ _ _ = return (team, [], seed)
+                  -> IO (Int, [Member], [(Word16, Int, [Int], [String])])
 automateLevels desiredBattles team seed (encThrPointer, encLevel) encTable fbattle fwin = do
-    let encs = encountersFromSeed seed (encounterThresholds !! (encThrPointer + encLevel)) encTable
-        ((arrivalSeed, Just (enc, seed')), frames) = head $ filter (encFindFunc desiredBattles) (zip encs [0..])
-    (enemies, yield, rate) <- readEnemies (encFileMap M.! enc)
-    let (_, (_, members', h, seed''), w) = fastestFBattle (team ++ enemies) yield rate seed' fbattle fwin
-        encLevel' = min (encLevel + 1) 2
-        desiredBattles' = consumeBattles enc desiredBattles
-        team' = take 4 members'
-
-    putStrLn ("enc. infos: " ++ showHex16 arrivalSeed ++ ", " ++ showHex16 seed' ++ ", " ++
-              showHex8 enc ++ ", " ++ show frames ++ ", " ++ show w ++ ", " ++ show desiredBattles ++ ", " ++
-              showHex8 yield ++ ", " ++ showHex8 rate)
-    putStrLn ("threshold: " ++ showHex8 (encounterThresholds !! (encThrPointer + encLevel)))
-    putStrLn "h:"
-    mapM_ putStrLn h
-    putStrLn ("s: " ++ showHex16 seed'')
-
-    automateLevels desiredBattles' team' seed'' (encThrPointer, encLevel') encTable fbattle fwin
+    loop desiredBattles team seed (encThrPointer, encLevel) 0 []
     where
+    loop [] team seed _ time encHist = return (time, team, encHist)
+    loop desiredBattles team seed (encThrPointer, encLevel) time encHist = do
+      let encs = encountersFromSeed seed (encounterThresholds !! (encThrPointer + encLevel)) encTable
+          ((arrivalSeed, Just (enc, seed')), frames) = head $ filter (encFindFunc desiredBattles) (zip encs [0..])
+      (enemies, yield, rate) <- readEnemies (encFileMap M.! enc)
+      let (time', (_, members', h, seed''), w) = fastestFBattle (team ++ enemies) yield rate seed' fbattle fwin
+          encLevel' = min (encLevel + 1) 2
+          desiredBattles' = consumeBattles enc desiredBattles
+          team' = take 4 members'
+          encHist' = encHist ++ [(arrivalSeed, frames, w, h)]
+      loop desiredBattles' team' seed'' (encThrPointer, encLevel') (time + time' + frames) encHist'
     encFindFunc desiredBattles ((_, enc), _) = (fst <$> enc) `elem` map (Just . fst) desiredBattles
     reduceBattles _ [] = []
     reduceBattles enc ((e, c) : desiredBattles) =
         (if enc == e then (e, c - 1) else (e, c)) : reduceBattles enc desiredBattles
     consumeBattles enc desiredBattles =
         filter ((/= 0) . snd) (reduceBattles enc desiredBattles)
+
+fastestAutoLevels :: [(Word8, Int)] -> [Member] -> Word16 -> (Int, Int) -> [Word8]
+                  -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int))
+                  -> ((Int, ActionRet, [Int]) -> Maybe (Int, ActionRet, [Int]))
+                  -> IO (Int, [Member], [(Word16, Int, [Int], [String])])
+fastestAutoLevels desiredBattles team seed (encThrPointer, encLevel) encTable fbattle fwin = do
+    (timeout, orgM, orgH) <- automateLevels desiredBattles team seed (encThrPointer, encLevel) encTable fbattle fwin
+    ret <- loop desiredBattles team seed (encThrPointer, encLevel) 0 timeout []
+    return $ fromMaybe (timeout, orgM, orgH) ret
+    where
+    loop desiredBattles team seed (encThrPointer, encLevel) time timeout encHist = do
+        let encs = encountersFromSeed seed (encounterThresholds !! (encThrPointer + encLevel)) encTable
+            selectEncs = filter (encFindFunc desiredBattles) (zip encs [0..timeout])
+        states <- mapM (\((arrivalSeed, Just (enc, seed')), frames) -> do
+            (enemies, yield, rate) <- readEnemies (encFileMap M.! enc)
+            let (time', (_, members', h, seed''), w) = fastestFBattle (team ++ enemies) yield rate seed' fbattle fwin
+                encLevel' = min (encLevel + 1) 2
+                team' = take 4 members'
+                encHist' = encHist ++ [(arrivalSeed, frames, w, h)]
+            case consumeBattles enc desiredBattles of
+              [] -> return $ Just (time + time' + frames, team', encHist')
+              desiredBattles' -> loop desiredBattles' team' seed'' (encThrPointer, encLevel') (time + time' + frames) timeout encHist') selectEncs
+        let filteredStates = filter (\(time, _, _) -> time <= timeout) (catMaybes states)
+        return $ case filteredStates of
+          [] -> Nothing
+          _ -> Just $ minimum filteredStates
+    encFindFunc desiredBattles ((_, enc), _) = (fst <$> enc) `elem` map (Just . fst) desiredBattles
+    reduceBattles _ [] = []
+    reduceBattles enc ((e, c) : desiredBattles) =
+        (if enc == e then (e, c - 1) else (e, c)) : reduceBattles enc desiredBattles
+    consumeBattles enc desiredBattles =
+        filter ((/= 0) . snd) (reduceBattles enc desiredBattles)
+
+printAutoHist :: [(Word16, Int, [Int], [String])] -> IO ()
+printAutoHist [] = return ()
+printAutoHist ((seed, frames, waits, hist) : h) = do
+    putStrLn ("enc. infos: " ++ showHex16 seed ++ ", " ++ show frames ++ ", " ++ show waits)
+    putStrLn "h:"
+    mapM_ putStrLn hist
+    printAutoHist h
 
 --main = do
 --    (members, yield, rate) <- readBattleMembers "team.txt" "mt_itoi/enc9a.txt"
@@ -1550,8 +1586,6 @@ automateLevels desiredBattles team seed (encThrPointer, encLevel) encTable fbatt
 -- main = do
 --     encTable <- readEncounterTable "maps/map35.txt"
 --     mapM_ putStrLn (take 1500 $ prettyEFS $ encountersFromSeed 0x07fa 0x0a encTable)
-
--- TODO: support encounter levels
 
 main = do
     encTable <- readEncounterTable "maps/map35.txt"
@@ -1571,5 +1605,8 @@ main = do
                (name starMiner /= "Star Miner" || (name starMiner == "Star Miner" && 0x24 `elem` items))
             then Just (time, (ts, members, hist, seed), waits)
             else Nothing
-    (t, _, _) <- automateLevels [(0x92, 1), (0x9a, 10)] team 0xd111 (5, 0) encTable fbattle fwin
-    print t
+    --(time, team, hist) <- automateLevels [(0x92, 1), (0x9a, 10)] team 0xd111 (5, 0) encTable fbattle fwin
+    (time, team, hist) <- fastestAutoLevels [(0x92, 1), (0x9a, 10)] team 0xd111 (5, 0) encTable fbattle fwin
+    putStrLn ("time: " ++ show time)
+    mapM_ (putStrLn . showMember) team
+    printAutoHist hist
