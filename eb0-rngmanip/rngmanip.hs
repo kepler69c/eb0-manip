@@ -1510,19 +1510,20 @@ automateLevels :: [(Word8, Int)] -> [Member] -> Word16 -> (Int, Int) -> [Word8]
                   -> ((Int, ActionRet, [Int]) -> Maybe (Int, ActionRet, [Int]))
                   -> IO (Int, [Member], [(Word16, Int, [Int], [String])])
 automateLevels desiredBattles team seed (encThrPointer, encLevel) encTable fbattle fwin = do
-    loop desiredBattles team seed (encThrPointer, encLevel) 0 []
+    enemyMap <- foldM (\m enc -> do v <- readEnemies (encFileMap M.! enc); return $ M.insert enc v m) M.empty (map fst desiredBattles)
+    return $ loop desiredBattles team seed (encThrPointer, encLevel) enemyMap 0 []
     where
-    loop [] team seed _ time encHist = return (time, team, encHist)
-    loop desiredBattles team seed (encThrPointer, encLevel) time encHist = do
+    loop [] team seed _ _ time encHist = (time, team, encHist)
+    loop desiredBattles team seed (encThrPointer, encLevel) enemyMap time encHist =
       let encs = encountersFromSeed seed (encounterThresholds !! (encThrPointer + encLevel)) encTable
           ((arrivalSeed, Just (enc, seed')), frames) = head $ filter (encFindFunc desiredBattles) (zip encs [0..])
-      (enemies, yield, rate) <- readEnemies (encFileMap M.! enc)
-      let (time', (_, members', h, seed''), w) = fastestFBattle (team ++ enemies) yield rate seed' fbattle fwin
+          (enemies, yield, rate) = enemyMap M.! enc
+          (time', (_, members', h, seed''), w) = fastestFBattle (team ++ enemies) yield rate seed' fbattle fwin
           encLevel' = min (encLevel + 1) 2
           desiredBattles' = consumeBattles enc desiredBattles
           team' = take 4 members'
-          encHist' = encHist ++ [(arrivalSeed, frames, w, h)]
-      loop desiredBattles' team' seed'' (encThrPointer, encLevel') (time + time' + frames) encHist'
+          encHist' = encHist ++ [(arrivalSeed, frames, w, h)] in
+      loop desiredBattles' team' seed'' (encThrPointer, encLevel') enemyMap (time + time' + frames) encHist'
     encFindFunc desiredBattles ((_, enc), _) = (fst <$> enc) `elem` map (Just . fst) desiredBattles
     reduceBattles _ [] = []
     reduceBattles enc ((e, c) : desiredBattles) =
@@ -1536,25 +1537,26 @@ fastestAutoLevels :: [(Word8, Int)] -> [Member] -> Word16 -> (Int, Int) -> [Word
                   -> IO (Int, [Member], [(Word16, Int, [Int], [String])])
 fastestAutoLevels desiredBattles team seed (encThrPointer, encLevel) encTable fbattle fwin = do
     (timeout, orgM, orgH) <- automateLevels desiredBattles team seed (encThrPointer, encLevel) encTable fbattle fwin
-    ret <- loop desiredBattles team seed (encThrPointer, encLevel) 0 timeout []
-    return $ fromMaybe (timeout, orgM, orgH) ret
+    enemyMap <- foldM (\m enc -> do v <- readEnemies (encFileMap M.! enc); return $ M.insert enc v m) M.empty (map fst desiredBattles)
+    return $ fromMaybe (timeout, orgM, orgH) (loop desiredBattles team seed (encThrPointer, encLevel) enemyMap 0 timeout [])
     where
-    loop desiredBattles team seed (encThrPointer, encLevel) time timeout encHist = do
+    loop desiredBattles team seed (encThrPointer, encLevel) enemyMap time timeout encHist =
         let encs = encountersFromSeed seed (encounterThresholds !! (encThrPointer + encLevel)) encTable
-            selectEncs = filter (encFindFunc desiredBattles) (zip encs [0..timeout])
-        states <- mapM (\((arrivalSeed, Just (enc, seed')), frames) -> do
-            (enemies, yield, rate) <- readEnemies (encFileMap M.! enc)
-            let (time', (_, members', h, seed''), w) = fastestFBattle (team ++ enemies) yield rate seed' fbattle fwin
-                encLevel' = min (encLevel + 1) 2
-                team' = take 4 members'
-                encHist' = encHist ++ [(arrivalSeed, frames, w, h)]
-            case consumeBattles enc desiredBattles of
-              [] -> return $ Just (time + time' + frames, team', encHist')
-              desiredBattles' -> loop desiredBattles' team' seed'' (encThrPointer, encLevel') (time + time' + frames) timeout encHist') selectEncs
-        let filteredStates = filter (\(time, _, _) -> time <= timeout) (catMaybes states)
-        return $ case filteredStates of
-          [] -> Nothing
-          _ -> Just $ minimum filteredStates
+            selectEncs = filter (encFindFunc desiredBattles) (zip encs [0..(timeout - time)])
+            states = map (\((arrivalSeed, Just (enc, seed')), frames) ->
+              let (enemies, yield, rate) = enemyMap M.! enc
+                  (time', (_, members', h, seed''), w) = fastestFBattle (team ++ enemies) yield rate seed' fbattle fwin
+                  encLevel' = min (encLevel + 1) 2
+                  team' = take 4 members'
+                  encHist' = encHist ++ [(arrivalSeed, frames, w, h)] in
+              case consumeBattles enc desiredBattles of
+              [] -> Just (time + time' + frames, team', encHist')
+              desiredBattles' ->
+                  loop desiredBattles' team' seed'' (encThrPointer, encLevel') enemyMap (time + time' + frames) timeout encHist') selectEncs
+            filteredStates = filter (\(time, _, _) -> time < timeout) (catMaybes states) in
+        case filteredStates of
+        [] -> Nothing
+        _ -> trace ("min time: " ++ show (minimum filteredStates)) $ Just $ minimum filteredStates
     encFindFunc desiredBattles ((_, enc), _) = (fst <$> enc) `elem` map (Just . fst) desiredBattles
     reduceBattles _ [] = []
     reduceBattles enc ((e, c) : desiredBattles) =
