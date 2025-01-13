@@ -61,6 +61,8 @@ no tp skip: 54408
 tp skip: 52578
 
 notes on manipped battles:
+- lamp & doll: [0,1] & [1,0,1]
+- regul. at zoo: 5 menus -> Fly [0]
 - mansion red snake waits: [6, 0]
   TODO: REDO MANIP NOOOO [4]
 - duncan stray dog waits: [0]

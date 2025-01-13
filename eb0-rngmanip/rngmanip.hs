@@ -1386,6 +1386,7 @@ successfulFBattle members yield rate seed fbattle fwin =
                   fwin (loop hist members (skipRng (i * 24) seed) time []) <&> (, i)) [0..] in
         (time', ar, (head waits + i) : tail waits)
 
+-- TODO: do memoization
 fastestBattle :: [Member] -> Word8 -> Word8 -> Word16 -> (Int, ActionRet, [Int])
 fastestBattle members yield rate seed =
     let (timeout, orgA, orgW) = successfulBattle members yield rate seed
@@ -1409,7 +1410,7 @@ fastestBattle members yield rate seed =
             filteredStates = filter (\(time, _, _) -> time <= timeout) states in
         case filteredStates of
         [] -> Nothing
-        _ -> Just $ minimum filteredStates
+        (t, _, w) : _ -> trace (show (t, w)) $ Just $ minimum filteredStates
     allBattleTurn members seed =
         map (\i ->
             case battleTurn members seed i of
@@ -1495,10 +1496,11 @@ encountersFromSeed seed threshold encTable =
                 if enc /= 0x00 then Just (enc, s) else Nothing) (tail (iterate nextRng s))
         else Nothing
 
-prettyEFS = map (\(s, e) -> showHex16 s ++ " - " ++ maybe "N/A" (\(e, s') -> "(" ++ showHex8 e ++ ", " ++ showHex16 s' ++ ")") e)
+prettyEFS = map (\(s, e) -> showHex16 s ++ " - " ++ maybe "N/A" (\(e, s') -> "("
+    ++ showHex8 e ++ ", " ++ showHex16 s' ++ ")") e)
 
-flattenEFS :: Word16 -> Word8 -> [Word8] -> [(Word16, (Word8, Word16))]
-flattenEFS seed threshold encTable =
+flatEFS :: Word16 -> Word8 -> [Word8] -> [(Word16, (Word8, Word16))]
+flatEFS seed threshold encTable =
     mapMaybe (\(s, o) -> o >>= (\k -> Just (s, k))) (encountersFromSeed seed threshold encTable)
 
 prettyFlatEFS = map (\(s, (e, s')) -> showHex16 s ++ " - (" ++ showHex8 e ++ ", " ++ showHex16 s' ++ ")")
@@ -1553,10 +1555,11 @@ fastestAutoLevels desiredBattles team seed (encThrPointer, encLevel) encTable fb
               [] -> Just (time + time' + frames, team', encHist')
               desiredBattles' ->
                   loop desiredBattles' team' seed'' (encThrPointer, encLevel') enemyMap (time + time' + frames) timeout encHist') selectEncs
-            filteredStates = filter (\(time, _, _) -> time < timeout) (catMaybes states) in
+            filteredStates = filter (\(time, _, _) -> trace ("found time: " ++ show time) $ time < timeout) (catMaybes states) in
         case filteredStates of
         [] -> Nothing
-        _ -> trace ("min time: " ++ show (minimum filteredStates)) $ Just $ minimum filteredStates
+        (time, _, encHist) : _ ->
+          Just (minimum filteredStates)
     encFindFunc desiredBattles ((_, enc), _) = (fst <$> enc) `elem` map (Just . fst) desiredBattles
     reduceBattles _ [] = []
     reduceBattles enc ((e, c) : desiredBattles) =
@@ -1564,51 +1567,63 @@ fastestAutoLevels desiredBattles team seed (encThrPointer, encLevel) encTable fb
     consumeBattles enc desiredBattles =
         filter ((/= 0) . snd) (reduceBattles enc desiredBattles)
 
-printAutoHist :: [(Word16, Int, [Int], [String])] -> IO ()
-printAutoHist [] = return ()
-printAutoHist ((seed, frames, waits, hist) : h) = do
-    putStrLn ("enc. infos: " ++ showHex16 seed ++ ", " ++ show frames ++ ", " ++ show waits)
-    putStrLn "h:"
-    mapM_ putStrLn hist
-    printAutoHist h
+prettyAutoHist :: [(Word16, Int, [Int], [String])] -> [String]
+prettyAutoHist [] = []
+prettyAutoHist ((seed, frames, waits, hist) : h) =
+    let pressWindow = takeWhile (\s -> (s .>>. 8) >= 0x06) (drop 1 (iterate (skipRng 65535) seed))
+        ppw = "[" ++ intercalate ", " (map showHex16 pressWindow) ++ "]" in
+    [ "enc. infos: " ++ showHex16 seed ++ ", " ++ show frames ++ ", " ++ show waits
+    , "ppw: " ++ ppw
+    , "len. ppw: " ++ show (length pressWindow)
+    , "h:" ]
+    ++ hist
+    ++ prettyAutoHist h
 
---main = do
---    (members, yield, rate) <- readBattleMembers "team.txt" "mt_itoi/enc9a.txt"
---    let (t, (_, members', h, s)) = performBattle members yield rate 0x8f9e [3, 1]
---    putStrLn "h:"
---    mapM_ putStrLn h
---    putStrLn $ "seed: " ++ showHex16 s
---    putStrLn $ "time: " ++ show t
-
---main = do
---    let (s, p) = prettyStepAnalysis 0x7f8a 0x0a 5 1000
---    mapM_ putStrLn s
---    print p
-
+-- #1 house manips
 -- main = do
---     encTable <- readEncounterTable "maps/map35.txt"
---     mapM_ putStrLn (take 1500 $ prettyEFS $ encountersFromSeed 0x07fa 0x0a encTable)
+--     team <- readTeam "team_house.txt"
+--     enemies <- readTeam "house/lamp.txt"
+--     let (_, (_, members', h, _), w) = fastestBattle (team ++ enemies) 0x00 0x00 0x40b3
+--         team' = take 4 members'
+--     putStrLn ("w: " ++ show w)
+--     putStrLn "h:"
+--     mapM_ putStrLn h
+--     enemies <- readTeam "house/doll.txt"
+--     let (_, (_, _, h, _), w) = fastestBattle (team' ++ enemies) 0x00 0x00 0x838e
+--     putStrLn ("w: " ++ show w)
+--     putStrLn "h:"
+--     mapM_ putStrLn h
 
+-- #2 starman jr
 main = do
-    encTable <- readEncounterTable "maps/map35.txt"
-    team <- readTeam "team.txt"
-    let fbattle members seed i =
-            case battleTurn members seed i of
-            (Loss, _, _, _) -> Nothing
-            ret ->
-                let (_, ninten : _, _, _) = ret in
-                if alive ninten
-                then Just (ret, i)
-                else Nothing
-        fwin (time, (ts, members, hist, seed), waits) =
-            let items = concatMap bag members
-                starMiner = members !! 4 in
-            if (0x00 `elem` items || 0x24 `elem` items) &&
-               (name starMiner /= "Star Miner" || (name starMiner == "Star Miner" && 0x24 `elem` items))
-            then Just (time, (ts, members, hist, seed), waits)
-            else Nothing
-    --(time, team, hist) <- automateLevels [(0x92, 1), (0x9a, 10)] team 0xd111 (5, 0) encTable fbattle fwin
-    (time, team, hist) <- fastestAutoLevels [(0x92, 1), (0x9a, 10)] team 0xd111 (5, 0) encTable fbattle fwin
-    putStrLn ("time: " ++ show time)
-    mapM_ (putStrLn . showMember) team
-    printAutoHist hist
+    team <- readTeam "team_zoo.txt"
+    enemies <- readTeam "zoo/starman.txt"
+    let (_, (_, members', h, _), w) = fastestBattle (team ++ enemies) 0x00 0x00 0x187b
+        team' = take 4 members'
+    putStrLn ("w: " ++ show w)
+    putStrLn "h:"
+    mapM_ putStrLn h
+
+--main = do
+--    encTable <- readEncounterTable "maps/map35.txt"
+--    team <- readTeam "team.txt"
+--    let fbattle members seed i =
+--            case battleTurn members seed i of
+--            (Loss, _, _, _) -> Nothing
+--            ret ->
+--                let (_, ninten : _, _, _) = ret in
+--                if alive ninten
+--                then Just (ret, i)
+--                else Nothing
+--        fwin (time, (ts, members, hist, seed), waits) =
+--            let items = concatMap bag members
+--                starMiner = members !! 4 in
+--            if (0x00 `elem` items || 0x24 `elem` items) &&
+--               (name starMiner /= "Star Miner" || (name starMiner == "Star Miner" && 0x24 `elem` items))
+--            then Just (time, (ts, members, hist, seed), waits)
+--            else Nothing
+--    --(time, team, hist) <- fastestAutoLevels [(0x92, 1), (0x9a, 10)] team 0xd111 (5, 0) encTable fbattle fwin
+--    (time, team, hist) <- automateLevels [(0x92, 1), (0x9a, 10)] team 0xd111 (5, 0) encTable fbattle fwin
+--    putStrLn ("time: " ++ show time)
+--    mapM_ (putStrLn . showMember) team
+--    mapM_ putStrLn (prettyAutoHist hist)
