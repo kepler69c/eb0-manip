@@ -993,7 +993,7 @@ dec15 = M.fromList
     , (6, Next 7) ]
 afp15 = ActionParam 
     { afFixedDamage = Nothing
-    , afPP = Just 0x10
+    , afPP = Just 0x0c
     , afBuff = Nothing }
 
 map38 = M.fromList
@@ -1386,31 +1386,39 @@ successfulFBattle members yield rate seed fbattle fwin =
                   fwin (loop hist members (skipRng (i * 24) seed) time []) <&> (, i)) [0..] in
         (time', ar, (head waits + i) : tail waits)
 
--- TODO: do memoization
 fastestBattle :: [Member] -> Word8 -> Word8 -> Word16 -> (Int, ActionRet, [Int])
 fastestBattle members yield rate seed =
     let (timeout, orgA, orgW) = successfulBattle members yield rate seed
         (ts, members', hist, seed') = battleBegin members seed
         time = sum (map length hist) + (length hist * 10) + 100 in
-    fromMaybe (timeout, orgA, orgW) (loop hist members' seed' time timeout [])
+    fromMaybe (timeout, orgA, orgW) $ loop hist members' seed' time timeout []
     where
     loop hist members seed time timeout waits =
-        let waits' = takeWhile (\wait -> time + 24 * wait <= timeout) [0..]
+        let waits' = takeWhile (\wait -> time + 24 * wait < timeout) [0..]
             battles = catMaybes $ allBattleTurn members seed waits'
-            states = mapMaybe (\((ts, members', hist', seed'), wait) ->
-                let time' = time + sum (map length hist') + (length hist' * 10) + wait * 24 + 100
+            state = foldl' (\ret ((ts, members', hist', seed'), wait) ->
+                let timeout' = fromMaybe timeout (ret >>= (\(t, _, _) -> return t))
+                    time' = time + sum (map length hist') + (length hist' * 10) + wait * 24 + 100
                     rhist = hist ++ hist'
                     rwaits = waits ++ [wait] in
-                (case ts of
-                 Continue -> loop rhist members' seed' time' timeout rwaits
-                 Win ->
-                     let (members'', hist'', seed'') = battleWin members' yield rate rhist seed' in
-                     Just (time', (ts, members'', hist'', seed''), rwaits)
-                 Loss -> Nothing)) battles
-            filteredStates = filter (\(time, _, _) -> time <= timeout) states in
-        case filteredStates of
-        [] -> Nothing
-        (t, _, w) : _ -> trace (show (t, w)) $ Just $ minimum filteredStates
+                if time' >= timeout' then ret else
+                case ts of
+                Continue ->
+                    case loop rhist members' seed' time' timeout' rwaits of
+                    Just (time'', ar, rwaits') -> selRet ret (time'', ar, rwaits')
+                    _ -> ret
+                Win ->
+                    let (members'', hist'', seed'') = battleWin members' yield rate rhist seed'
+                        v = (time', (Win, members'', hist'', seed''), rwaits) in
+                    selRet ret v
+                Loss -> ret) Nothing battles in
+        case state of
+        Just (t, _, w) -> trace (show (t, w)) state
+        _ -> Nothing
+    selRet ret v =
+        Just $ case ret of
+        Just v' -> min v v'
+        Nothing -> v
     allBattleTurn members seed =
         map (\i ->
             case battleTurn members seed i of
@@ -1430,20 +1438,29 @@ fastestFBattle members yield rate seed fbattle fwin =
     loop hist members seed time timeout waits =
         let waits' = takeWhile (\wait -> time + 24 * wait <= timeout) [0..]
             battles = catMaybes $ allBattleTurn members seed waits'
-            states = mapMaybe (\((ts, members', hist', seed'), wait) ->
-                let time' = time + sum (map length hist') + (length hist' * 10) + wait * 24 + 100
+            state = foldl' (\ret ((ts, members', hist', seed'), wait) ->
+                let timeout' = fromMaybe timeout (ret >>= (\(t, _, _) -> return t))
+                    time' = time + sum (map length hist') + (length hist' * 10) + wait * 24 + 100
                     rhist = hist ++ hist'
                     rwaits = waits ++ [wait] in
-                (case ts of
-                 Continue -> loop rhist members' seed' time' timeout rwaits
-                 Win ->
-                     let (members'', hist'', seed'') = battleWin members' yield rate rhist seed' in
-                     fwin (time', (ts, members'', hist'', seed''), rwaits)
-                 Loss -> Nothing)) battles
-            filteredStates = filter (\(time, _, _) -> time < timeout) states in
-        case filteredStates of
-        [] -> Nothing
-        _ -> Just $ minimum filteredStates
+                if time' >= timeout' then ret else
+                case ts of
+                Continue ->
+                    case loop rhist members' seed' time' timeout' rwaits of
+                    Just (time'', ar, rwaits') -> selRet ret (time'', ar, rwaits')
+                    _ -> ret
+                Win ->
+                    let (members'', hist'', seed'') = battleWin members' yield rate rhist seed'
+                        v = (time', (Win, members'', hist'', seed''), rwaits) in
+                    selRet ret v
+                Loss -> ret) Nothing battles in
+        case state of
+        Just (t, _, w) -> trace (show (t, w)) state
+        _ -> Nothing
+    selRet ret v =
+        Just $ case ret of
+        Just v' -> min v v'
+        Nothing -> v
     allBattleTurn members seed = map (fbattle members seed)
 
 performBattle :: [Member] -> Word8 -> Word8 -> Word16 -> [Int] -> (Int, ActionRet)
@@ -1504,8 +1521,6 @@ flatEFS seed threshold encTable =
     mapMaybe (\(s, o) -> o >>= (\k -> Just (s, k))) (encountersFromSeed seed threshold encTable)
 
 prettyFlatEFS = map (\(s, (e, s')) -> showHex16 s ++ " - (" ++ showHex8 e ++ ", " ++ showHex16 s' ++ ")")
-
--- TODO: open all files before doing anything else (could remove the IO monad)
 
 automateLevels :: [(Word8, Int)] -> [Member] -> Word16 -> (Int, Int) -> [Word8]
                   -> ([Member] -> Word16 -> Int -> Maybe (ActionRet, Int))
@@ -1594,15 +1609,35 @@ prettyAutoHist ((seed, frames, waits, hist) : h) =
 --     putStrLn "h:"
 --     mapM_ putStrLn h
 
--- #2 starman jr
-main = do
-    team <- readTeam "team_zoo.txt"
-    enemies <- readTeam "zoo/starman.txt"
-    let (_, (_, members', h, _), w) = fastestBattle (team ++ enemies) 0x00 0x00 0x187b
-        team' = take 4 members'
-    putStrLn ("w: " ++ show w)
-    putStrLn "h:"
-    mapM_ putStrLn h
+-- #2 starman jr1
+-- main = do
+--     team <- readTeam "team_zoo1.txt"
+--     enemies <- readTeam "zoo/starman.txt"
+--     let (_, (_, members', h, _), w) = fastestBattle (team ++ enemies) 0x00 0x00 0xf6f0
+--         team' = take 4 members'
+--     putStrLn ("w: " ++ show w)
+--     putStrLn "h:"
+--     mapM_ putStrLn h
+
+-- #3 starman jr2
+-- main = do
+--     team <- readTeam "team_zoo1.txt"
+--     enemies <- readTeam "zoo/starman.txt"
+--     let (_, (_, members', h, _), w) = fastestBattle (team ++ enemies) 0x00 0x00 0x12da
+--         team' = take 4 members'
+--     putStrLn ("w: " ++ show w)
+--     putStrLn "h:"
+--     mapM_ putStrLn h
+
+-- #4 stray dog post zoo
+-- main = do
+--     team <- readTeam "team_zoo2.txt"
+--     enemies <- readTeam "zoo/enc07.txt"
+--     let (_, (_, members', h, _), w) = fastestBattle (team ++ enemies) 0x00 0x00 0x2d32
+--         team' = take 4 members'
+--     putStrLn ("w: " ++ show w)
+--     putStrLn "h:"
+--     mapM_ putStrLn h
 
 --main = do
 --    encTable <- readEncounterTable "maps/map35.txt"

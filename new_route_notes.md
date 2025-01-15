@@ -51,19 +51,20 @@ last ideas:
 - use Crumbs
 - destroy game
 
-TODO: redo the manip from Magicant: it's way faster to reset after saving (fast after manip text is possible)
-should I heal in magicant?
-- YES for no tp skip
-- NO  for tp skip (TODO: confirm)
-
 TP SKIP IS FASTER!! (~30s)
 no tp skip: 54408
 tp skip: 52578
 
 notes on manipped battles:
 - lamp & doll: [0,1] & [1,0,1]
-- regul. at zoo: 5 menus -> Fly [0]
-- mansion red snake waits: [6, 0]
-  TODO: REDO MANIP NOOOO [4]
-- duncan stray dog waits: [0]
-- desert snake [0]
+- regul. zoo: 5 menus -> Fly [0]
+- starman jr: [2,5,6,20,3,7,1,3] if dodge on T1
+              [2,12,9,6,1,3,7,1,3] if psi beam r in T1
+              reset otherwise
+              faster options (respectively)
+              [12,6,20,3,7,1,3] if dodge on T1
+              [26,4,4,17,1,3,7] if psi beam r in T1 (different outgoing seed)
+- pre-mansion red snake waits: [6, 0]
+  TODO: [4] is also possible
+- duncan stray dog: [0]
+- desert snake: [0]
