@@ -1,0 +1,462 @@
+enc. infos: 0x0329, 907, [3,1]
+len. ppw: 19
+h:
+LastStarmanA draws near!
+LastStarmanB draws near!
+LastStarmanC draws near!
+LastStarmanD draws near!
+EVE's attack!
+LastStarmanD suffered damage of 789.
+LastStarmanD was beaten!
+LastStarmanB tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanB was beaten!
+LastStarmanC is ready for an attack.
+LastStarmanA tried PK Beam r!
+B was beaten!
+A's attack!
+LastStarmanA dodged swiftly.
+EVE's attack!
+LastStarmanC suffered damage of 956.
+LastStarmanC was beaten!
+LastStarmanA tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanA was beaten!
+YOU WIN
+A advanced to the next Level!
+FIGHT has increased by 2.
+SPEED has increased by 3.
+WISDOM has increased by 3.
+STRENGTH has increased by 3.
+FORCE has increased by 2.
+Maximum HP has increased by 3.
+Maximum PP has increased by 3.
+A advanced to the next Level!
+FIGHT has increased by 2.
+SPEED has increased by 3.
+WISDOM has increased by 3.
+STRENGTH has increased by 2.
+FORCE has increased by 3.
+Maximum HP has increased by 8.
+Maximum PP has increased by 6.
+A advanced to the next Level!
+FIGHT has increased by 3.
+SPEED has increased by 2.
+WISDOM has increased by 2.
+STRENGTH has increased by 3.
+FORCE has increased by 2.
+Maximum HP has increased by 8.
+Maximum PP has increased by 2.
+A advanced to the next Level!
+FIGHT has increased by 2.
+SPEED has increased by 3.
+WISDOM has increased by 2.
+STRENGTH has increased by 3.
+FORCE has increased by 3.
+Maximum PP has increased by 6.
+A advanced to the next Level!
+FIGHT has increased by 2.
+SPEED has increased by 3.
+WISDOM has increased by 3.
+STRENGTH has increased by 3.
+FORCE has increased by 3.
+Maximum HP has increased by 12.
+Maximum PP has increased by 4.
+A advanced to the next Level!
+FIGHT has increased by 3.
+SPEED has increased by 2.
+WISDOM has increased by 2.
+STRENGTH has increased by 2.
+FORCE has increased by 2.
+Maximum HP has increased by 1.
+Maximum PP has increased by 3.
+A advanced to the next Level!
+FIGHT has increased by 2.
+SPEED has increased by 3.
+WISDOM has increased by 2.
+STRENGTH has increased by 3.
+FORCE has increased by 2.
+Maximum PP has increased by 2.
+A advanced to the next Level!
+FIGHT has increased by 2.
+SPEED has increased by 3.
+WISDOM has increased by 2.
+STRENGTH has increased by 2.
+FORCE has increased by 2.
+Maximum HP has increased by 8.
+Maximum PP has increased by 2.
+A learned a new PSI-power through battle!
+enc. infos: 0x0724, 34, [0,0,0]
+len. ppw: 21
+h:
+LastStarmanA draws near!
+LastStarmanB draws near!
+LastStarmanC draws near!
+LastStarmanD draws near!
+EVE's attack!
+LastStarmanC suffered damage of 492.
+LastStarmanC was beaten!
+LastStarmanB tried PSIShield a!
+LastStarmanB was shielded.
+LastStarmanA tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanA was beaten!
+LastStarmanD tried PSIShield a!
+LastStarmanD was shielded.
+A's attack!
+LastStarmanA was already gone.
+EVE's attack!
+SMAAAASH!!
+LastStarmanD suffered damage of 419.
+LastStarmanD was beaten!
+LastStarmanB is ready for an attack.
+A's attack!
+LastStarmanA was already gone.
+EVE's attack!
+LastStarmanB suffered damage of 225.
+LastStarmanB was beaten!
+YOU WIN
+A advanced to the next Level!
+FIGHT has increased by 2.
+SPEED has increased by 2.
+WISDOM has increased by 2.
+STRENGTH has increased by 3.
+FORCE has increased by 2.
+Maximum HP has increased by 9.
+Maximum PP has increased by 3.
+A advanced to the next Level!
+FIGHT has increased by 2.
+SPEED has increased by 3.
+WISDOM has increased by 2.
+STRENGTH has increased by 3.
+FORCE has increased by 3.
+Maximum HP has increased by 2.
+Maximum PP has increased by 9.
+A advanced to the next Level!
+FIGHT has increased by 2.
+SPEED has increased by 3.
+WISDOM has increased by 3.
+STRENGTH has increased by 3.
+FORCE has increased by 3.
+Maximum HP has increased by 13.
+A learned a new PSI-power through battle!
+enc. infos: 0x031b, 439, [6,0]
+len. ppw: 39
+h:
+LastStarmanA draws near!
+LastStarmanB draws near!
+LastStarmanC draws near!
+LastStarmanD draws near!
+EVE's attack!
+SMAAAASH!!
+LastStarmanA suffered damage of 1068.
+LastStarmanA was beaten!
+LastStarmanB tried PK Beam B!
+EVE suffered damage of 73.
+LastStarmanC tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanC was beaten!
+LastStarmanD tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanD was beaten!
+A's attack!
+LastStarmanA was already gone.
+EVE's attack!
+LastStarmanB suffered damage of 938.
+LastStarmanB was beaten!
+YOU WIN
+A advanced to the next Level!
+FIGHT has increased by 2.
+SPEED has increased by 3.
+WISDOM has increased by 2.
+STRENGTH has increased by 3.
+FORCE has increased by 3.
+Maximum PP has increased by 7.
+A advanced to the next Level!
+FIGHT has increased by 3.
+SPEED has increased by 3.
+WISDOM has increased by 3.
+STRENGTH has increased by 2.
+FORCE has increased by 3.
+Maximum PP has increased by 5.
+A learned a new PSI-power through battle!
+A learned a new PSI-power through battle!
+Picked up PSI Stone!
+enc. infos: 0x019d, 47, [21]
+len. ppw: 66
+h:
+Star Miner draws near!
+EVE's attack!
+Star Miner suffered damage of 836.
+Star Miner was beaten!
+YOU WIN
+A learned a new PSI-power through battle!
+Picked up Super Bomb!
+enc. infos: 0x0223, 32, [2,0,0]
+len. ppw: 16
+h:
+LastStarmanA draws near!
+LastStarmanB draws near!
+LastStarmanC draws near!
+LastStarmanD draws near!
+EVE's attack!
+SMAAAASH!!
+LastStarmanD suffered damage of 524.
+LastStarmanD was beaten!
+LastStarmanC tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanC was beaten!
+LastStarmanA is ready for an attack.
+LastStarmanB is ready for an attack.
+A's attack!
+LastStarmanA suffered damage of 1.
+EVE's attack!
+LastStarmanA suffered damage of 845.
+LastStarmanA was beaten!
+LastStarmanB tried PSIShield a!
+LastStarmanA was already gone.
+A's attack!
+LastStarmanA was already gone.
+EVE's attack!
+LastStarmanB suffered damage of 910.
+LastStarmanB was beaten!
+YOU WIN
+A advanced to the next Level!
+FIGHT has increased by 3.
+SPEED has increased by 2.
+WISDOM has increased by 3.
+STRENGTH has increased by 2.
+FORCE has increased by 3.
+Maximum HP has increased by 7.
+Maximum PP has increased by 4.
+A advanced to the next Level!
+FIGHT has increased by 3.
+SPEED has increased by 2.
+WISDOM has increased by 3.
+STRENGTH has increased by 2.
+FORCE has increased by 2.
+Maximum PP has increased by 3.
+A learned a new PSI-power through battle!
+enc. infos: 0x021e, 710, [1,0,1,0]
+len. ppw: 30
+h:
+LastStarmanA draws near!
+LastStarmanB draws near!
+LastStarmanC draws near!
+LastStarmanD draws near!
+EVE's attack!
+LastStarmanD suffered damage of 1040.
+LastStarmanD was beaten!
+LastStarmanB tried PK Beam B!
+EVE suffered damage of 92.
+LastStarmanA is ready for an attack.
+LastStarmanC is ready for an attack.
+A's attack!
+LastStarmanA suffered damage of 1.
+EVE's attack!
+LastStarmanB suffered damage of 910.
+LastStarmanB was beaten!
+LastStarmanA's attack!
+A dodged swiftly.
+LastStarmanC tried PK Beam B!
+EVE suffered damage of 81.
+A's attack!
+LastStarmanA suffered damage of 4.
+EVE's attack!
+SMAAAASH!!
+LastStarmanA suffered damage of 489.
+LastStarmanA was beaten!
+LastStarmanC's attack!
+A dodged swiftly.
+A's attack!
+LastStarmanA was already gone.
+EVE's attack!
+LastStarmanC suffered damage of 1049.
+LastStarmanC was beaten!
+YOU WIN
+A advanced to the next Level!
+FIGHT has increased by 3.
+SPEED has increased by 2.
+WISDOM has increased by 2.
+STRENGTH has increased by 3.
+FORCE has increased by 2.
+Maximum HP has increased by 3.
+Maximum PP has increased by 3.
+A learned a new PSI-power through battle!
+A learned a new PSI-power through battle!
+A learned a new PSI-power through battle!
+Picked up PSI Stone!
+enc. infos: 0x021c, 39, [4,0,0]
+len. ppw: 33
+h:
+LastStarmanA draws near!
+LastStarmanB draws near!
+LastStarmanC draws near!
+LastStarmanD draws near!
+EVE's attack!
+SMAAAASH!!
+LastStarmanB suffered damage of 939.
+LastStarmanB was beaten!
+LastStarmanC is ready for an attack.
+LastStarmanD is ready for an attack.
+LastStarmanA tried PSIShield a!
+LastStarmanD was shielded.
+A's attack!
+LastStarmanA suffered damage of 5.
+EVE's attack!
+SMAAAASH!!
+LastStarmanD suffered damage of 489.
+LastStarmanD was beaten!
+LastStarmanC tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanC was beaten!
+LastStarmanA is ready for an attack.
+A's attack!
+LastStarmanA dodged swiftly.
+EVE's attack!
+SMAAAASH!!
+LastStarmanA suffered damage of 1048.
+LastStarmanA was beaten!
+YOU WIN
+A advanced to the next Level!
+FIGHT has increased by 3.
+SPEED has increased by 2.
+WISDOM has increased by 3.
+STRENGTH has increased by 2.
+FORCE has increased by 3.
+Maximum HP has increased by 11.
+A advanced to the next Level!
+FIGHT has increased by 3.
+SPEED has increased by 2.
+WISDOM has increased by 3.
+STRENGTH has increased by 2.
+FORCE has increased by 3.
+Maximum HP has increased by 5.
+Maximum PP has increased by 4.
+enc. infos: 0x0355, 301, [1,3]
+len. ppw: 11
+h:
+LastStarmanA draws near!
+LastStarmanB draws near!
+LastStarmanC draws near!
+LastStarmanD draws near!
+EVE's attack!
+LastStarmanB suffered damage of 938.
+LastStarmanB was beaten!
+LastStarmanC is ready for an attack.
+LastStarmanD is ready for an attack.
+LastStarmanA tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanA was beaten!
+A's attack!
+LastStarmanA was already gone.
+EVE's attack!
+SMAAAASH!!
+LastStarmanD suffered damage of 1128.
+LastStarmanD was beaten!
+LastStarmanC tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanC was beaten!
+YOU WIN
+A advanced to the next Level!
+FIGHT has increased by 3.
+SPEED has increased by 3.
+WISDOM has increased by 2.
+STRENGTH has increased by 2.
+FORCE has increased by 2.
+Maximum HP has increased by 3.
+enc. infos: 0x0253, 596, [2,5]
+len. ppw: 9
+h:
+LastStarmanA draws near!
+LastStarmanB draws near!
+LastStarmanC draws near!
+LastStarmanD draws near!
+EVE's attack!
+SMAAAASH!!
+LastStarmanD suffered damage of 524.
+LastStarmanD was beaten!
+LastStarmanA tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanA was beaten!
+A's attack!
+LastStarmanA was already gone.
+LastStarmanB tried PK Beam r!
+EVE suffered damage of 2.
+LastStarmanC is ready for an attack.
+EVE's attack!
+LastStarmanB suffered damage of 1003.
+LastStarmanB was beaten!
+LastStarmanC tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanC was beaten!
+YOU WIN
+A advanced to the next Level!
+FIGHT has increased by 3.
+SPEED has increased by 2.
+WISDOM has increased by 2.
+STRENGTH has increased by 2.
+FORCE has increased by 2.
+Maximum HP has increased by 7.
+Maximum PP has increased by 14.
+A learned a new PSI-power through battle!
+enc. infos: 0x0525, 494, [10,5]
+len. ppw: 174
+h:
+LastStarmanA draws near!
+LastStarmanB draws near!
+LastStarmanC draws near!
+LastStarmanD draws near!
+EVE's attack!
+LastStarmanD suffered damage of 938.
+LastStarmanD was beaten!
+LastStarmanB tried PK Beam r!
+EVE suffered damage of 1.
+LastStarmanC tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanC was beaten!
+A's attack!
+LastStarmanA suffered damage of 14.
+LastStarmanA's attack!
+EVE dodged swiftly.
+EVE's attack!
+LastStarmanA suffered damage of 966.
+LastStarmanA was beaten!
+LastStarmanB tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanB was beaten!
+YOU WIN
+A advanced to the next Level!
+FIGHT has increased by 2.
+SPEED has increased by 3.
+WISDOM has increased by 2.
+STRENGTH has increased by 3.
+FORCE has increased by 3.
+Maximum HP has increased by 1.
+Maximum PP has increased by 1.
+A learned a new PSI-power through battle!
+enc. infos: 0x051e, 971, [10,1]
+len. ppw: 125
+h:
+LastStarmanA draws near!
+LastStarmanB draws near!
+LastStarmanC draws near!
+LastStarmanD draws near!
+EVE's attack!
+LastStarmanC suffered damage of 873.
+LastStarmanC was beaten!
+A's attack!
+LastStarmanA suffered damage of 14.
+LastStarmanA tried PK Beam B!
+EVE suffered damage of 76.
+LastStarmanD is ready for an attack.
+LastStarmanB tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanB was beaten!
+EVE's attack!
+LastStarmanD suffered damage of 1040.
+LastStarmanD was beaten!
+LastStarmanA tried PK Beam r!
+But, A's FranklinBadge bounced back the Beam!
+LastStarmanA was beaten!
+YOU WIN

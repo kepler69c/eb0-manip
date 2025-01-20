@@ -64,7 +64,6 @@ notes on manipped battles:
               faster options (respectively)
               [12,6,20,3,7,1,3] if dodge on T1
               [26,4,4,17,1,3,7] if psi beam r in T1 (different outgoing seed)
-- pre-mansion red snake waits: [6, 0]
-  TODO: [4] is also possible
-- duncan stray dog: [0]
-- desert snake: [0]
+- pre-mansion red snake waits: [4]
+- duncan stray dog: [0] (dodge + crit)
+- youngstown snake: [4]
