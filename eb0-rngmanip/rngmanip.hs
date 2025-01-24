@@ -1781,36 +1781,37 @@ prettyAutoHist ((seed, frames, waits, hist) : h) =
 --     let l = map (successfulBattle (team ++ enemies) 0x00 0x00) (take 240 $ iterate nextRng 0x16dc)
 --     mapM_ (\(_, (_, _, _, s), w) -> putStrLn ("s: " ++ showHex16 s ++ ", w: " ++ show w)) l
 
+-- #5 mt itoi battle search
 -- main = do
---     let seed = 0x8a8a
---         threshold = 0x0a
---         window = 5
---     let (s, p) = prettyStepAnalysis seed threshold window 500
---     mapM_ putStrLn s
---     print p
---     let t = flatEFS seed threshold [ 0x47, 0x5a, 0x5b, 0x5c, 0x5d, 0x61, 0x62, 0x63
---                                    , 0x64, 0x66, 0x69, 0x00, 0x00, 0x00, 0x00, 0x00 ]
---     mapM_ putStrLn (take 5 $ prettyFlatEFS t)
+--     encTable <- readEncounterTable "maps/map35.txt"
+--     team <- readTeam "team_itoi1.txt"
+--     let fbattle members seed i =
+--             case battleTurn members seed i of
+--             (Loss, _, _, _) -> Nothing
+--             ret ->
+--                 let (_, ninten : _, _, _) = ret in
+--                 if alive ninten
+--                 then Just (ret, i)
+--                 else Nothing
+--         fwin (time, (ts, members, hist, seed), waits) =
+--             let items = concatMap bag members
+--                 starMiner = members !! 4 in
+--             if (0x00 `elem` items || 0x24 `elem` items) &&
+--                (name starMiner /= "Star Miner" || (name starMiner == "Star Miner" && 0x24 `elem` items))
+--             then Just (time, (ts, members, hist, seed), waits)
+--             else Nothing
+--     (time, team, hist) <- fastestAutoLevels [(0x92, 1), (0x9a, 10)] team 0xcaa2 (5, 0) encTable fbattle fwin
+--     putStrLn ("time: " ++ show time)
+--     mapM_ (putStrLn . showMember) team
+--     mapM_ putStrLn (prettyAutoHist hist)
 
 main = do
-    encTable <- readEncounterTable "maps/map35.txt"
-    team <- readTeam "team.txt"
-    let fbattle members seed i =
-            case battleTurn members seed i of
-            (Loss, _, _, _) -> Nothing
-            ret ->
-                let (_, ninten : _, _, _) = ret in
-                if alive ninten
-                then Just (ret, i)
-                else Nothing
-        fwin (time, (ts, members, hist, seed), waits) =
-            let items = concatMap bag members
-                starMiner = members !! 4 in
-            if (0x00 `elem` items || 0x24 `elem` items) &&
-               (name starMiner /= "Star Miner" || (name starMiner == "Star Miner" && 0x24 `elem` items))
-            then Just (time, (ts, members, hist, seed), waits)
-            else Nothing
-    (time, team, hist) <- fastestAutoLevels [(0x92, 1), (0x9a, 10)] team 0xcaa2 (5, 0) encTable fbattle fwin
-    putStrLn ("time: " ++ show time)
-    mapM_ (putStrLn . showMember) team
-    mapM_ putStrLn (prettyAutoHist hist)
+    let seed = 0xc45a
+        threshold = 0x0d
+        window = 8
+    let (s, p) = prettyStepAnalysis seed threshold window 500
+    mapM_ putStrLn s
+    print p
+    -- let t = flatEFS seed threshold [ 0x47, 0x5a, 0x5b, 0x5c, 0x5d, 0x61, 0x62, 0x63
+    --                                , 0x64, 0x66, 0x69, 0x00, 0x00, 0x00, 0x00, 0x00 ]
+    -- mapM_ putStrLn (take 5 $ prettyFlatEFS t)

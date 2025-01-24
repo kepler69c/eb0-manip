@@ -460,3 +460,27 @@ LastStarmanA tried PK Beam r!
 But, A's FranklinBadge bounced back the Beam!
 LastStarmanA was beaten!
 YOU WIN
+
+stripped info:
+enc. infos: 0x0329, 907, [3,1] (22.775-23.25 beats)
+len. ppw: 19
+enc. infos: 0x0724, 34, [0,0,0] (1 A press)
+len. ppw: 21
+enc. infos: 0x031b, 439, [6,0] (10.575-11.55 beats)
+len. ppw: 39
+enc. infos: 0x019d, 47, [21] (just run)
+len. ppw: 66
+enc. infos: 0x0223, 32, [2,0,0] (1 A press)
+len. ppw: 16
+enc. infos: 0x021e, 710, [1,0,1,0] (17.575-18.325 beats)
+len. ppw: 30
+enc. infos: 0x021c, 39, [4,0,0] (1 A press)
+len. ppw: 33
+enc. infos: 0x0355, 301, [1,3] (7.825-8.1 beats)
+len. ppw: 11
+enc. infos: 0x0253, 596, [2,5] (15.25-15.475 beats OR 4 steps 2 A press 2 steps 13.9-14.125 beats)
+len. ppw: 9
+enc. infos: 0x0525, 494, [10,5] (8.575-12.925 beats)
+len. ppw: 174
+enc. infos: 0x051e, 971, [10,1] (21.725-24.85 beats)
+len. ppw: 125

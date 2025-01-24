@@ -65,5 +65,8 @@ notes on manipped battles:
               [12,6,20,3,7,1,3] if dodge on T1
               [26,4,4,17,1,3,7] if psi beam r in T1 (different outgoing seed)
 - pre-mansion red snake waits: [4]
-- duncan stray dog: [0] (dodge + crit)
+- duncan stray dog: [0] (dodge + crit on T2)
 - youngstown snake: [4]
+- r7038xx: [0,2,0]
+
+tunnel lamp sequence: 8 5 0 9 0 11 4 1 2 0 2 1
