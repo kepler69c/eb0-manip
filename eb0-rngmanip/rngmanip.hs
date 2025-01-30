@@ -1784,7 +1784,7 @@ prettyAutoHist ((seed, frames, waits, hist) : h) =
 -- #5 mt itoi battle search
 -- main = do
 --     encTable <- readEncounterTable "maps/map35.txt"
---     team <- readTeam "team_itoi1.txt"
+--     team <- readTeam "team_itoi.txt"
 --     let fbattle members seed i =
 --             case battleTurn members seed i of
 --             (Loss, _, _, _) -> Nothing

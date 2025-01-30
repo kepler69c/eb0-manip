@@ -61,11 +61,10 @@ notes on manipped battles:
 - starman jr: [2,5,6,20,3,7,1,3] if dodge on T1
               [2,12,9,6,1,3,7,1,3] if psi beam r in T1
               reset otherwise
-              faster options (respectively)
-              [12,6,20,3,7,1,3] if dodge on T1
-              [26,4,4,17,1,3,7] if psi beam r in T1 (different outgoing seed)
-- pre-mansion red snake waits: [4]
-- duncan stray dog: [0] (dodge + crit on T2)
+              faster option (but some frames may kill the run)
+              [12,6,20,3,7,1,3]
+- pre-mansion red snake: [4]
+- duncan stray dog: [0,0] (dodge + crit on T2)
 - youngstown snake: [4]
 - r7038xx: [0,2,0]
 
